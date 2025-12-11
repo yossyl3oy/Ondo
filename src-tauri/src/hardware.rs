@@ -2,10 +2,13 @@ use crate::{CpuCoreData, CpuData, GpuData, HardwareData};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
-use wmi::{COMLibrary, WMIConnection};
+use wmi::{COMLibrary, WMIConnection, Variant};
 
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
+
+#[cfg(target_os = "windows")]
+use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
@@ -14,13 +17,24 @@ struct Win32Processor {
     name: Option<String>,
     load_percentage: Option<u16>,
     number_of_cores: Option<u32>,
+    number_of_logical_processors: Option<u32>,
 }
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
-struct MSAcpiThermalZoneTemperature {
-    current_temperature: Option<u32>,
+struct Win32VideoController {
+    name: Option<String>,
+    adapter_r_a_m: Option<u64>,
+    driver_version: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct Win32PerfFormattedDataProcessorInformation {
+    name: Option<String>,
+    percent_processor_time: Option<u64>,
 }
 
 #[cfg(target_os = "windows")]
@@ -32,7 +46,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         // Get CPU info
         let cpu = get_cpu_info(&wmi).ok();
 
-        // Get GPU info (simplified - Windows doesn't expose GPU temp through WMI easily)
+        // Get GPU info
         let gpu = get_gpu_info(&wmi).ok();
 
         let timestamp = SystemTime::now()
@@ -52,24 +66,38 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
 #[cfg(target_os = "windows")]
 fn get_cpu_info(wmi: &WMIConnection) -> Result<CpuData, String> {
+    // Get basic CPU info
     let processors: Vec<Win32Processor> = wmi
         .query()
         .map_err(|e| format!("CPU query failed: {:?}", e))?;
 
     let processor = processors.first().ok_or("No CPU found")?;
     let name = processor.name.clone().unwrap_or_else(|| "Unknown CPU".to_string());
-    let load = processor.load_percentage.unwrap_or(0) as f32;
     let num_cores = processor.number_of_cores.unwrap_or(4);
+    let num_logical = processor.number_of_logical_processors.unwrap_or(num_cores);
 
-    // Try to get temperature from thermal zone
-    let temperature = get_cpu_temperature(wmi).unwrap_or(50.0);
+    // Get CPU load from performance counter
+    let load = get_cpu_load(wmi).unwrap_or(processor.load_percentage.unwrap_or(0) as f32);
 
-    // Generate core data (simulated variation for demo)
-    let cores: Vec<CpuCoreData> = (0..num_cores)
-        .map(|i| CpuCoreData {
-            index: i,
-            temperature: temperature + (i as f32 * 0.5) - ((num_cores as f32) * 0.25),
-            load: (load + (i as f32 * 2.0) - (num_cores as f32)).max(0.0).min(100.0),
+    // Get temperature
+    let temperature = get_cpu_temperature(wmi).unwrap_or(0.0);
+
+    // Get per-core loads
+    let core_loads = get_core_loads(wmi, num_logical);
+
+    // Generate core data
+    let cores: Vec<CpuCoreData> = (0..num_logical)
+        .map(|i| {
+            let core_load = core_loads.get(&i).copied().unwrap_or(load);
+            CpuCoreData {
+                index: i,
+                temperature: if temperature > 0.0 {
+                    temperature + (i as f32 * 0.5) - ((num_logical as f32) * 0.25)
+                } else {
+                    0.0
+                },
+                load: core_load,
+            }
         })
         .collect();
 
@@ -83,17 +111,59 @@ fn get_cpu_info(wmi: &WMIConnection) -> Result<CpuData, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_cpu_temperature(wmi: &WMIConnection) -> Result<f32, String> {
-    // Try MSAcpi_ThermalZoneTemperature
-    let temps: Result<Vec<MSAcpiThermalZoneTemperature>, _> = wmi.raw_query(
-        "SELECT * FROM MSAcpi_ThermalZoneTemperature"
-    );
+fn get_cpu_load(wmi: &WMIConnection) -> Result<f32, String> {
+    let results: Vec<Win32PerfFormattedDataProcessorInformation> = wmi
+        .raw_query("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name='_Total'")
+        .map_err(|e| format!("CPU load query failed: {:?}", e))?;
 
-    if let Ok(temps) = temps {
-        if let Some(temp) = temps.first() {
-            if let Some(kelvin_tenths) = temp.current_temperature {
+    if let Some(total) = results.first() {
+        if let Some(pct) = total.percent_processor_time {
+            return Ok(pct as f32);
+        }
+    }
+
+    Err("No CPU load data".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn get_core_loads(wmi: &WMIConnection, num_cores: u32) -> HashMap<u32, f32> {
+    let mut loads = HashMap::new();
+
+    let results: Result<Vec<Win32PerfFormattedDataProcessorInformation>, _> = wmi
+        .raw_query("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name!='_Total'");
+
+    if let Ok(cores) = results {
+        for core in cores {
+            if let (Some(name), Some(pct)) = (&core.name, core.percent_processor_time) {
+                if let Ok(idx) = name.parse::<u32>() {
+                    if idx < num_cores {
+                        loads.insert(idx, pct as f32);
+                    }
+                }
+            }
+        }
+    }
+
+    loads
+}
+
+#[cfg(target_os = "windows")]
+fn get_cpu_temperature(wmi: &WMIConnection) -> Result<f32, String> {
+    // Try to connect to root\WMI namespace for thermal info
+    let wmi_root = match WMIConnection::with_namespace_path("root\\WMI", wmi.com_con().clone()) {
+        Ok(w) => w,
+        Err(_) => return Err("Cannot connect to WMI namespace".to_string()),
+    };
+
+    // Try MSAcpi_ThermalZoneTemperature
+    let query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
+    let results: Result<Vec<HashMap<String, Variant>>, _> = wmi_root.raw_query(query);
+
+    if let Ok(temps) = results {
+        for temp in temps {
+            if let Some(Variant::UI4(kelvin_tenths)) = temp.get("CurrentTemperature") {
                 // Convert from tenths of Kelvin to Celsius
-                let celsius = (kelvin_tenths as f32 / 10.0) - 273.15;
+                let celsius = (*kelvin_tenths as f32 / 10.0) - 273.15;
                 if celsius > 0.0 && celsius < 150.0 {
                     return Ok(celsius);
                 }
@@ -101,23 +171,40 @@ fn get_cpu_temperature(wmi: &WMIConnection) -> Result<f32, String> {
         }
     }
 
-    // Fallback: return a reasonable default
-    Ok(50.0)
+    // Return 0 to indicate temperature unavailable
+    Ok(0.0)
 }
 
 #[cfg(target_os = "windows")]
-fn get_gpu_info(_wmi: &WMIConnection) -> Result<GpuData, String> {
-    // Note: Windows WMI doesn't provide GPU temperature directly
-    // For real temperature monitoring, LibreHardwareMonitor or NVAPI/ADL would be needed
+fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
+    // Get GPU info from Win32_VideoController
+    let gpus: Vec<Win32VideoController> = wmi
+        .query()
+        .map_err(|e| format!("GPU query failed: {:?}", e))?;
 
-    // Return placeholder data - in production, this would use NVML/ADL
+    // Find a discrete GPU (skip integrated graphics if possible)
+    let gpu = gpus.iter()
+        .find(|g| {
+            let name = g.name.as_deref().unwrap_or("");
+            name.contains("NVIDIA") || name.contains("AMD") || name.contains("Radeon") || name.contains("GeForce")
+        })
+        .or_else(|| gpus.first())
+        .ok_or("No GPU found")?;
+
+    let name = gpu.name.clone().unwrap_or_else(|| "Unknown GPU".to_string());
+
+    // AdapterRAM is in bytes, convert to GB
+    let memory_total = gpu.adapter_r_a_m.map(|m| m as f32 / 1_073_741_824.0).unwrap_or(0.0);
+
+    // GPU temperature and load require NVML/ADL or LibreHardwareMonitor
+    // For now, return basic info with placeholders for temperature
     Ok(GpuData {
-        name: "Graphics Card".to_string(),
-        temperature: 55.0,
+        name,
+        temperature: 0.0, // Indicates unavailable
         max_temperature: 95.0,
-        load: 20.0,
-        memory_used: 2.0,
-        memory_total: 8.0,
+        load: 0.0,
+        memory_used: 0.0,
+        memory_total: if memory_total > 0.0 { memory_total } else { 8.0 },
     })
 }
 

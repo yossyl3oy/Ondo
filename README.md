@@ -1,64 +1,67 @@
 # Ondo - Hardware Temperature Monitor
 
-アイアンマンのHUDをイメージした、Windows用ハードウェア温度モニタリングウィジェット。
+A sleek, HUD-style hardware temperature monitoring widget.
 
-## 機能
+## Features
 
-- CPU・GPU温度のリアルタイム表示
-- 画面端へのドッキング表示
-- 半透明でスタイリッシュなHUD風デザイン
-- システムテーマ連動（ダーク/ライトモード自動切替）
-- 起動時のブートシーケンスアニメーション
-- システムトレイ常駐
-- Windows起動時の自動起動（設定可能）
+- Real-time CPU & GPU temperature display
+- Screen edge docking
+- Semi-transparent, stylish HUD design
+- System theme sync (auto dark/light mode)
+- Boot sequence animation
+- System tray integration
+- Auto-start on system boot (configurable)
+- Auto-update support
 
-## スクリーンショット
+## Screenshots
 
-起動時にアイアンマン風のブートシーケンスが表示され、その後メインウィジェットに移行します。
+The app displays a boot sequence animation on startup, then transitions to the main monitoring widget.
 
-## 必要環境
+## Requirements
 
-- Windows 10/11
-- Node.js 18以上
-- Rust 1.70以上
+- Windows 10/11 or macOS
+- Node.js 18+
+- Rust 1.70+
 - Tauri CLI
 
-## セットアップ
+## Setup
 
 ```bash
-# 依存関係のインストール
+# Install dependencies
 npm install
 
-# 開発モードで起動
+# Run in development mode
 npm run tauri dev
 
-# プロダクションビルド
+# Build for production
 npm run tauri build
 ```
 
-## 設定
+## Settings
 
-設定パネルから以下の項目を変更できます：
+The following options are available in the settings panel:
 
-- **Position**: ウィジェットの表示位置（右端、左端、角など）
-- **Opacity**: 透明度の調整（30-100%）
-- **Always on Top**: 常に最前面に表示
-- **Auto Start**: Windows起動時に自動起動
-- **Show CPU Cores**: 各CPUコアの温度を表示
-- **Update Interval**: 更新間隔（500ms-5000ms）
-- **Theme**: テーマ（Auto/Dark/Light）
+- **Position**: Widget display position (right, left, corners)
+- **Opacity**: Transparency level (30-100%)
+- **Always on Top**: Keep widget above other windows
+- **Auto Start**: Launch on system startup
+- **Show CPU Cores**: Display individual CPU core temperatures
+- **Update Interval**: Refresh rate (500ms-5000ms)
+- **Theme**: Theme selection (Auto/Dark/Light)
 
-## 技術スタック
+## Tech Stack
 
 - **Frontend**: React 18 + TypeScript + Vite
 - **Backend**: Tauri 2 (Rust)
 - **Hardware Monitoring**: WMI (Windows Management Instrumentation)
 - **Styling**: CSS with HUD-style animations
 
-## 温度データについて
+## Temperature Data
 
-Windows標準のWMIを使用して温度データを取得しています。より詳細な温度情報が必要な場合は、LibreHardwareMonitorをインストールして実行してください。
+On Windows, temperature data is retrieved using native WMI. For more detailed temperature information, consider installing and running LibreHardwareMonitor.
 
-## ライセンス
+On macOS, temperature data is retrieved using system APIs.
+
+## License
 
 MIT License

@@ -3,7 +3,20 @@
   flex-direction: column;
   height: 100%;
   padding: 8px;
+  padding-top: 4px;
   animation: widgetFadeIn 0.5s ease;
+  position: relative;
+}
+
+/* Drag region at top - invisible overlay */
+.hud-widget > .drag-region {
+  -webkit-app-region: drag;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  z-index: 50;
 }
 
 @keyframes widgetFadeIn {
@@ -75,6 +88,8 @@
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
+  position: relative;
+  z-index: 100;
 }
 
 .hud-settings-btn:hover {

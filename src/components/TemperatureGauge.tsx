@@ -13,7 +13,8 @@ export function TemperatureGauge({
   status,
   label,
 }: TemperatureGaugeProps) {
-  const percentage = Math.min((value / max) * 100, 100);
+  const isAvailable = value > 0;
+  const percentage = isAvailable ? Math.min((value / max) * 100, 100) : 0;
 
   // Arc path calculation for the gauge
   const radius = 28;
@@ -92,7 +93,9 @@ export function TemperatureGauge({
         })}
       </svg>
       <div className="gauge-content">
-        <span className="gauge-value">{value}°</span>
+        <span className={`gauge-value ${!isAvailable ? 'unavailable' : ''}`}>
+          {isAvailable ? `${Math.round(value)}°` : 'N/A'}
+        </span>
         <span className="gauge-label">{label}</span>
       </div>
     </div>

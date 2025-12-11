@@ -29,8 +29,11 @@ export function HudWidget({
 
   return (
     <div className="hud-widget">
-      {/* Header with drag region */}
-      <div className="hud-header drag-region">
+      {/* Drag region - separate from header */}
+      <div className="drag-region" />
+
+      {/* Header */}
+      <div className="hud-header">
         <div className="hud-title">
           <span className="hud-title-icon">◈</span>
           <span className="hud-title-text">ONDO</span>
