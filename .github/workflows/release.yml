@@ -112,6 +112,19 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Setup .NET (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build LHM CLI (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd src-lhm
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
+          cp bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
+
       - name: Cache WiX Toolset (Windows)
         if: matrix.platform == 'windows-latest'
         id: cache-wix

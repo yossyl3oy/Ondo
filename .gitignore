@@ -36,6 +36,11 @@ yarn-error.log*
 src-tauri/target/
 src-tauri/WixTools/
 src-tauri/Cargo.lock
+src-tauri/ondo-hwmon.exe
+
+# C# LHM CLI build artifacts
+src-lhm/bin/
+src-lhm/obj/
 
 # Generated bundles
 *.msi
