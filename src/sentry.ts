@@ -9,6 +9,9 @@ function getPlatform(): string {
   return "unknown";
 }
 
+// Get version from package.json (injected by Vite)
+const APP_VERSION = __APP_VERSION__;
+
 export function initSentry() {
   const dsn = import.meta.env.VITE_SENTRY_DSN;
 
@@ -16,11 +19,13 @@ export function initSentry() {
     Sentry.init({
       dsn,
       environment: import.meta.env.MODE,
+      release: `ondo@${APP_VERSION}`,
       tracesSampleRate: 0.1,
       initialScope: {
         tags: {
           app: "ondo",
           platform: getPlatform(),
+          version: APP_VERSION,
         },
       },
     });

@@ -57,7 +57,19 @@ export function useUpdater() {
       }
     } catch (error) {
       console.error("[Updater] Error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Update check failed";
+      // Get detailed error information
+      let errorMessage = "Update check failed";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        // Include stack trace if available
+        if (error.stack) {
+          console.error("[Updater] Stack:", error.stack);
+        }
+      } else if (typeof error === "string") {
+        errorMessage = error;
+      } else if (error && typeof error === "object") {
+        errorMessage = JSON.stringify(error);
+      }
       captureUpdateError(`check: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
@@ -106,7 +118,19 @@ export function useUpdater() {
       // Relaunch the app after update
       await relaunch();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Update failed";
+      console.error("[Updater] Download error:", error);
+      // Get detailed error information
+      let errorMessage = "Update failed";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        if (error.stack) {
+          console.error("[Updater] Stack:", error.stack);
+        }
+      } else if (typeof error === "string") {
+        errorMessage = error;
+      } else if (error && typeof error === "object") {
+        errorMessage = JSON.stringify(error);
+      }
       captureUpdateError(`download: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
