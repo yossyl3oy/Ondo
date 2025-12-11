@@ -148,12 +148,11 @@ fn get_core_loads(wmi: &WMIConnection, num_cores: u32) -> HashMap<u32, f32> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_cpu_temperature(wmi: &WMIConnection) -> Result<f32, String> {
-    // Try to connect to root\WMI namespace for thermal info
-    let wmi_root = match WMIConnection::with_namespace_path("root\\WMI", wmi.com_con().clone()) {
-        Ok(w) => w,
-        Err(_) => return Err("Cannot connect to WMI namespace".to_string()),
-    };
+fn get_cpu_temperature(_wmi: &WMIConnection) -> Result<f32, String> {
+    // Create a new COM connection for root\WMI namespace
+    let com = COMLibrary::new().map_err(|e| format!("COM init failed: {:?}", e))?;
+    let wmi_root = WMIConnection::with_namespace_path("root\\WMI", com)
+        .map_err(|_| "Cannot connect to WMI namespace".to_string())?;
 
     // Try MSAcpi_ThermalZoneTemperature
     let query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
