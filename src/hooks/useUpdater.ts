@@ -27,11 +27,14 @@ export function useUpdater() {
 
   const checkForUpdate = useCallback(async () => {
     setState((prev) => ({ ...prev, checking: true, error: null }));
+    console.log("[Updater] Checking for updates...");
 
     try {
       const update = await check();
+      console.log("[Updater] Check result:", update);
 
       if (update) {
+        console.log("[Updater] Update available:", update.version);
         setState((prev) => ({
           ...prev,
           checking: false,
@@ -43,6 +46,7 @@ export function useUpdater() {
         }));
         return update;
       } else {
+        console.log("[Updater] No update available");
         setState((prev) => ({
           ...prev,
           checking: false,
@@ -51,6 +55,7 @@ export function useUpdater() {
         return null;
       }
     } catch (error) {
+      console.error("[Updater] Error:", error);
       setState((prev) => ({
         ...prev,
         checking: false,
