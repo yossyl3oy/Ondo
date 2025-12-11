@@ -20,7 +20,7 @@ const createBootLines = (version: string): BootLine[] => [
 export function BootSequence() {
   const [visibleLines, setVisibleLines] = useState<number>(0);
   const [scanlineActive, setScanlineActive] = useState(true);
-  const [bootLines, setBootLines] = useState<BootLine[]>(createBootLines("1.1.6"));
+  const [bootLines, setBootLines] = useState<BootLine[]>(createBootLines("1.1.7"));
 
   useEffect(() => {
     getVersion().then((v) => {
