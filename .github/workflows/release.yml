@@ -112,6 +112,47 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Cache WiX Toolset (Windows)
+        if: matrix.platform == 'windows-latest'
+        id: cache-wix
+        uses: actions/cache@v4
+        with:
+          path: ~/.tauri/WixTools
+          key: wix-toolset-3.14.1
+          restore-keys: |
+            wix-toolset-
+
+      - name: Download WiX Toolset with retry (Windows)
+        if: matrix.platform == 'windows-latest' && steps.cache-wix.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $maxRetries = 5
+          $retryDelay = 30
+          $wixUrl = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          $wixDir = "$env:USERPROFILE\.tauri\WixTools"
+          $wixZip = "$env:TEMP\wix314-binaries.zip"
+
+          New-Item -ItemType Directory -Force -Path $wixDir | Out-Null
+
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            try {
+              Write-Host "Attempt $i of $maxRetries to download WiX..."
+              Invoke-WebRequest -Uri $wixUrl -OutFile $wixZip -UseBasicParsing
+              Write-Host "Download successful!"
+              Expand-Archive -Path $wixZip -DestinationPath $wixDir -Force
+              Remove-Item $wixZip
+              exit 0
+            } catch {
+              Write-Host "Download failed: $_"
+              if ($i -lt $maxRetries) {
+                Write-Host "Waiting $retryDelay seconds before retry..."
+                Start-Sleep -Seconds $retryDelay
+              }
+            }
+          }
+          Write-Error "Failed to download WiX after $maxRetries attempts"
+          exit 1
+
       - name: Install dependencies
         run: npm ci
 
