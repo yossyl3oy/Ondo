@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { AppSettings } from "../types";
+import { testSentryError } from "../sentry";
 import "./SettingsPanel.css";
 
 interface SettingsPanelProps {
@@ -9,6 +10,7 @@ interface SettingsPanelProps {
   onClose: () => void;
   onCheckUpdate?: () => void;
   checkingUpdate?: boolean;
+  updateMessage?: string | null;
 }
 
 export function SettingsPanel({
@@ -17,6 +19,7 @@ export function SettingsPanel({
   onClose,
   onCheckUpdate,
   checkingUpdate,
+  updateMessage,
 }: SettingsPanelProps) {
   const [version, setVersion] = useState("1.0.0");
 
@@ -175,6 +178,21 @@ export function SettingsPanel({
                 disabled={checkingUpdate}
               >
                 {checkingUpdate ? "Checking..." : "Check for Updates"}
+              </button>
+              {updateMessage && (
+                <div className="update-message">{updateMessage}</div>
+              )}
+            </div>
+          )}
+
+          {/* Debug: Test Sentry */}
+          {import.meta.env.DEV && (
+            <div className="setting-group">
+              <button
+                className="setting-button setting-button-debug"
+                onClick={testSentryError}
+              >
+                Test Sentry Error
               </button>
             </div>
           )}

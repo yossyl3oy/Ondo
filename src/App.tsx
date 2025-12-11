@@ -13,9 +13,23 @@ function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateNotification, setShowUpdateNotification] = useState(true);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
   const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
+
+  // Update message based on update check result
+  useEffect(() => {
+    if (checking) {
+      setUpdateMessage(null);
+    } else if (updateError) {
+      setUpdateMessage(`Error: ${updateError}`);
+    } else if (updateInfo?.available) {
+      setUpdateMessage(`Update available: v${updateInfo.version}`);
+    } else if (updateInfo && !updateInfo.available) {
+      setUpdateMessage("You're on the latest version");
+    }
+  }, [checking, updateInfo, updateError]);
 
   useEffect(() => {
     const bootTimer = setTimeout(() => {
@@ -63,6 +77,7 @@ function App() {
           onClose={() => setShowSettings(false)}
           onCheckUpdate={checkForUpdate}
           checkingUpdate={checking}
+          updateMessage={updateMessage}
         />
       )}
       {showUpdateNotification && updateInfo?.available && !showSettings && (
