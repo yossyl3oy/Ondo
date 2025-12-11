@@ -44,6 +44,10 @@ pub struct HardwareData {
     cpu: Option<CpuData>,
     gpu: Option<GpuData>,
     timestamp: u64,
+    #[serde(rename = "cpuError")]
+    cpu_error: Option<String>,
+    #[serde(rename = "gpuError")]
+    gpu_error: Option<String>,
 }
 
 pub struct AppState {

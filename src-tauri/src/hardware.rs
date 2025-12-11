@@ -47,15 +47,18 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Initialize COM - if this fails, return empty data
+        // Initialize COM - if this fails, return error details
         let com = match COMLibrary::new() {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[Hardware] COM init failed: {:?}", e);
+                let error_msg = format!("COM init failed: {:?}", e);
+                eprintln!("[Hardware] {}", error_msg);
                 return Ok(HardwareData {
                     cpu: None,
                     gpu: None,
                     timestamp,
+                    cpu_error: Some(error_msg.clone()),
+                    gpu_error: Some(error_msg),
                 });
             }
         };
@@ -64,30 +67,33 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         let wmi = match WMIConnection::new(com) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("[Hardware] WMI connection failed: {:?}", e);
+                let error_msg = format!("WMI connection failed: {:?}", e);
+                eprintln!("[Hardware] {}", error_msg);
                 return Ok(HardwareData {
                     cpu: None,
                     gpu: None,
                     timestamp,
+                    cpu_error: Some(error_msg.clone()),
+                    gpu_error: Some(error_msg),
                 });
             }
         };
 
         // Get CPU info with detailed logging
-        let cpu = match get_cpu_info(&wmi) {
-            Ok(data) => Some(data),
+        let (cpu, cpu_error) = match get_cpu_info(&wmi) {
+            Ok(data) => (Some(data), None),
             Err(e) => {
                 eprintln!("[Hardware] CPU error: {}", e);
-                None
+                (None, Some(e))
             }
         };
 
         // Get GPU info with detailed logging
-        let gpu = match get_gpu_info(&wmi) {
-            Ok(data) => Some(data),
+        let (gpu, gpu_error) = match get_gpu_info(&wmi) {
+            Ok(data) => (Some(data), None),
             Err(e) => {
                 eprintln!("[Hardware] GPU error: {}", e);
-                None
+                (None, Some(e))
             }
         };
 
@@ -95,6 +101,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             cpu,
             gpu,
             timestamp,
+            cpu_error,
+            gpu_error,
         })
     })
     .await
@@ -279,6 +287,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             memory_total: 10.0,
         }),
         timestamp,
+        cpu_error: None,
+        gpu_error: None,
     })
 }
 

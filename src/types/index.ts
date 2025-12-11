@@ -33,6 +33,8 @@ export interface HardwareData {
     memoryTotal: number;
   } | null;
   timestamp: number;
+  cpuError?: string;
+  gpuError?: string;
 }
 
 export interface WindowState {

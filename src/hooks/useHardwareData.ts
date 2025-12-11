@@ -35,13 +35,17 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
       // CPU/GPUがnullの場合はエラーとしてSentryに送信（初回のみ）
       if (!errorReportedRef.current.nullData) {
         if (data.cpu === null && data.gpu === null) {
-          captureHardwareError("Both CPU and GPU data are null", "both");
+          // 詳細エラーがある場合はそれを送信
+          const errorDetail = data.cpuError || data.gpuError || "Unknown error";
+          captureHardwareError(`Both CPU and GPU data are null: ${errorDetail}`, "both");
           errorReportedRef.current.nullData = true;
         } else if (data.cpu === null) {
-          captureHardwareError("CPU data is null", "cpu");
+          const errorDetail = data.cpuError || "Unknown error";
+          captureHardwareError(`CPU data is null: ${errorDetail}`, "cpu");
           errorReportedRef.current.nullData = true;
         } else if (data.gpu === null) {
-          captureHardwareError("GPU data is null", "gpu");
+          const errorDetail = data.gpuError || "Unknown error";
+          captureHardwareError(`GPU data is null: ${errorDetail}`, "gpu");
           errorReportedRef.current.nullData = true;
         }
       }
