@@ -23,6 +23,7 @@ pub struct CpuData {
     #[serde(rename = "maxTemperature")]
     max_temperature: f32,
     load: f32,
+    frequency: f32, // Current frequency in GHz
     cores: Vec<CpuCoreData>,
 }
 
@@ -33,6 +34,7 @@ pub struct GpuData {
     #[serde(rename = "maxTemperature")]
     max_temperature: f32,
     load: f32,
+    frequency: f32, // Current frequency in GHz
     #[serde(rename = "memoryUsed")]
     memory_used: f32,
     #[serde(rename = "memoryTotal")]
@@ -40,9 +42,34 @@ pub struct GpuData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageData {
+    name: String,
+    temperature: f32,
+    #[serde(rename = "usedSpace")]
+    used_space: f32, // in GB
+    #[serde(rename = "totalSpace")]
+    total_space: f32, // in GB
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FanData {
+    name: String,
+    speed: u32, // RPM
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotherboardData {
+    name: String,
+    temperature: f32,
+    fans: Vec<FanData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareData {
     cpu: Option<CpuData>,
     gpu: Option<GpuData>,
+    storage: Option<Vec<StorageData>>,
+    motherboard: Option<MotherboardData>,
     timestamp: u64,
     #[serde(rename = "cpuError")]
     cpu_error: Option<String>,

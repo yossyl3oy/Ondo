@@ -18,6 +18,7 @@ export interface HardwareData {
     temperature: number;
     maxTemperature: number;
     load: number;
+    frequency: number; // Current frequency in GHz
     cores: Array<{
       index: number;
       temperature: number;
@@ -29,8 +30,23 @@ export interface HardwareData {
     temperature: number;
     maxTemperature: number;
     load: number;
+    frequency: number; // Current frequency in GHz
     memoryUsed: number;
     memoryTotal: number;
+  } | null;
+  storage: Array<{
+    name: string;
+    temperature: number;
+    usedSpace: number; // in GB
+    totalSpace: number; // in GB
+  }> | null;
+  motherboard: {
+    name: string;
+    temperature: number;
+    fans: Array<{
+      name: string;
+      speed: number; // RPM
+    }>;
   } | null;
   timestamp: number;
   cpuError?: string;

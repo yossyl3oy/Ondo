@@ -4,6 +4,12 @@ import type { AppSettings } from "../types";
 import { testSentryError } from "../sentry";
 import "./SettingsPanel.css";
 
+interface UpdateInfo {
+  available: boolean;
+  version?: string;
+  notes?: string;
+}
+
 interface SettingsPanelProps {
   settings: AppSettings;
   onSettingsChange: (settings: Partial<AppSettings>) => void;
@@ -11,6 +17,10 @@ interface SettingsPanelProps {
   onCheckUpdate?: () => void;
   checkingUpdate?: boolean;
   updateMessage?: string | null;
+  updateInfo?: UpdateInfo | null;
+  onInstallUpdate?: () => void;
+  downloading?: boolean;
+  downloadProgress?: number;
 }
 
 export function SettingsPanel({
@@ -20,6 +30,10 @@ export function SettingsPanel({
   onCheckUpdate,
   checkingUpdate,
   updateMessage,
+  updateInfo,
+  onInstallUpdate,
+  downloading,
+  downloadProgress,
 }: SettingsPanelProps) {
   const [version, setVersion] = useState("1.0.0");
 
@@ -195,12 +209,36 @@ export function SettingsPanel({
               <button
                 className="setting-button"
                 onClick={onCheckUpdate}
-                disabled={checkingUpdate}
+                disabled={checkingUpdate || downloading}
               >
                 {checkingUpdate ? "Checking..." : "Check for Updates"}
               </button>
               {updateMessage && (
                 <div className="update-message">{updateMessage}</div>
+              )}
+              {updateInfo?.available && onInstallUpdate && (
+                <div className="update-install-section">
+                  {downloading ? (
+                    <div className="update-progress">
+                      <div className="update-progress-bar">
+                        <div
+                          className="update-progress-fill"
+                          style={{ width: `${downloadProgress || 0}%` }}
+                        />
+                      </div>
+                      <span className="update-progress-text">
+                        Downloading... {Math.round(downloadProgress || 0)}%
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      className="setting-button setting-button-update"
+                      onClick={onInstallUpdate}
+                    >
+                      Install Update v{updateInfo.version}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}

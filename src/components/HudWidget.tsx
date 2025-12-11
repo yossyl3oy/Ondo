@@ -89,7 +89,7 @@ export function HudWidget({
                   <div className="section-indicator cpu" />
                   <span className="section-label">CPU</span>
                   <span className="section-name" title={cpu.name}>
-                    {shortenName(cpu.name)}
+                    {cpu.name}
                   </span>
                   <span className="expand-icon">{showCores ? "▾" : "▸"}</span>
                 </div>
@@ -117,6 +117,13 @@ export function HudWidget({
                   </div>
                 </div>
 
+                <div className="cpu-frequency">
+                  <span className="frequency-label">FREQ</span>
+                  <span className="frequency-value">
+                    {cpu.frequency > 0 ? `${cpu.frequency.toFixed(2)} GHz` : "N/A"}
+                  </span>
+                </div>
+
                 {showCores && cpu.cores && cpu.cores.length > 0 && (
                   <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
                 )}
@@ -130,7 +137,7 @@ export function HudWidget({
                   <div className="section-indicator gpu" />
                   <span className="section-label">GPU</span>
                   <span className="section-name" title={gpu.name}>
-                    {shortenName(gpu.name)}
+                    {gpu.name}
                   </span>
                 </div>
 
@@ -157,6 +164,13 @@ export function HudWidget({
                   </div>
                 </div>
 
+                <div className="gpu-frequency">
+                  <span className="frequency-label">FREQ</span>
+                  <span className="frequency-value">
+                    {gpu.frequency > 0 ? `${gpu.frequency.toFixed(2)} GHz` : "N/A"}
+                  </span>
+                </div>
+
                 <div className="gpu-memory">
                   <span className="memory-label">VRAM</span>
                   <span className="memory-value">
@@ -169,6 +183,104 @@ export function HudWidget({
                         width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
                       }}
                     />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Storage Section */}
+            {hardwareData.storage && hardwareData.storage.map((drive, index) => (
+              <div key={index} className="hud-section">
+                <div className="hud-section-header">
+                  <div className="section-indicator storage" />
+                  <span className="section-label">SSD</span>
+                  <span className="section-name" title={drive.name}>
+                    {drive.name}
+                  </span>
+                </div>
+
+                <div className="hud-metrics">
+                  {drive.temperature > 0 ? (
+                    <TemperatureGauge
+                      value={drive.temperature}
+                      max={70}
+                      status={getTemperatureStatus(drive.temperature, 70)}
+                      label="TEMP"
+                    />
+                  ) : (
+                    <div className="temp-gauge">
+                      <div className="gauge-content">
+                        <span className="gauge-value unavailable">N/A</span>
+                        <span className="gauge-label">TEMP</span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="metric-divider" />
+                  <div className="metric-item">
+                    <span className="metric-label">USED</span>
+                    <span className="metric-value">
+                      {Math.round((drive.usedSpace / drive.totalSpace) * 100)}%
+                    </span>
+                    <div className="metric-bar">
+                      <div
+                        className="metric-bar-fill storage"
+                        style={{ width: `${(drive.usedSpace / drive.totalSpace) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="storage-capacity-info">
+                  <span className="capacity-label">CAPACITY</span>
+                  <span className="capacity-value">
+                    {drive.usedSpace.toFixed(0)}/{drive.totalSpace.toFixed(0)}GB
+                  </span>
+                </div>
+              </div>
+            ))}
+
+            {/* Motherboard Section */}
+            {hardwareData.motherboard && (
+              <div className="hud-section">
+                <div className="hud-section-header">
+                  <div className="section-indicator motherboard" />
+                  <span className="section-label">MB</span>
+                  <span className="section-name" title={hardwareData.motherboard.name}>
+                    {hardwareData.motherboard.name}
+                  </span>
+                </div>
+
+                <div className="hud-metrics">
+                  {hardwareData.motherboard.temperature > 0 ? (
+                    <TemperatureGauge
+                      value={hardwareData.motherboard.temperature}
+                      max={80}
+                      status={getTemperatureStatus(hardwareData.motherboard.temperature, 80)}
+                      label="TEMP"
+                    />
+                  ) : (
+                    <div className="temp-gauge">
+                      <div className="gauge-content">
+                        <span className="gauge-value unavailable">N/A</span>
+                        <span className="gauge-label">TEMP</span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="metric-divider" />
+                  <div className="metric-item fan-metrics">
+                    <span className="metric-label">FAN</span>
+                    {hardwareData.motherboard.fans.length > 0 ? (
+                      <div className="fan-speeds">
+                        {hardwareData.motherboard.fans.slice(0, 3).map((fan, idx) => (
+                          <div key={idx} className="fan-speed-item" title={fan.name}>
+                            <span className="fan-speed-value">{fan.speed}</span>
+                            <span className="fan-speed-unit">RPM</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="metric-value unavailable">N/A</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -193,14 +305,3 @@ export function HudWidget({
   );
 }
 
-function shortenName(name: string): string {
-  // Shorten common hardware names
-  return name
-    .replace("AMD Ryzen ", "R")
-    .replace("Intel Core ", "")
-    .replace("NVIDIA GeForce ", "")
-    .replace("AMD Radeon ", "")
-    .replace(" Processor", "")
-    .replace("-Core", "C")
-    .substring(0, 18);
-}

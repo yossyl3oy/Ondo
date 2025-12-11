@@ -258,6 +258,49 @@
   color: var(--hud-background);
 }
 
+/* Update Install Section */
+.update-install-section {
+  margin-top: 8px;
+}
+
+.setting-button-update {
+  border-color: var(--hud-success);
+  color: var(--hud-success);
+}
+
+.setting-button-update:hover:not(:disabled) {
+  background: var(--hud-success);
+  color: var(--hud-background);
+  box-shadow: 0 0 12px rgba(0, 255, 136, 0.4);
+}
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--hud-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--hud-primary), var(--hud-success));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.update-progress-text {
+  font-size: 10px;
+  text-align: center;
+  color: var(--hud-text-secondary);
+}
+
 .settings-footer {
   padding: 12px 16px;
   background: var(--hud-surface);

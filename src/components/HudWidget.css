@@ -185,6 +185,16 @@
   box-shadow: 0 0 8px var(--hud-success);
 }
 
+.section-indicator.storage {
+  background: var(--hud-warning);
+  box-shadow: 0 0 8px var(--hud-warning);
+}
+
+.section-indicator.motherboard {
+  background: #9b59b6;
+  box-shadow: 0 0 8px #9b59b6;
+}
+
 @keyframes indicatorPulse {
   0%, 100% {
     opacity: 1;
@@ -205,9 +215,11 @@
   flex: 1;
   font-size: 9px;
   color: var(--hud-text-secondary);
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .expand-icon {
@@ -265,6 +277,39 @@
 
 .metric-bar-fill.gpu {
   background: linear-gradient(90deg, var(--hud-success), #00ffcc);
+}
+
+/* CPU Frequency */
+.cpu-frequency {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hud-border);
+}
+
+.frequency-label {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--hud-text-secondary);
+}
+
+.frequency-value {
+  font-size: 11px;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-accent);
+  font-weight: 600;
+}
+
+/* GPU Frequency */
+.gpu-frequency {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hud-border);
 }
 
 /* GPU Memory */
@@ -347,4 +392,67 @@
   margin-left: auto;
   font-family: 'Roboto Mono', monospace;
   color: var(--hud-text-secondary);
+}
+
+/* Storage Section */
+.metric-bar-fill.storage {
+  background: linear-gradient(90deg, var(--hud-warning), #f39c12);
+}
+
+.storage-capacity-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hud-border);
+}
+
+.storage-capacity-info .capacity-label {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--hud-text-secondary);
+}
+
+.storage-capacity-info .capacity-value {
+  font-size: 11px;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-warning);
+  font-weight: 600;
+}
+
+/* Motherboard Section - Fan Display */
+.fan-metrics {
+  min-width: 80px;
+}
+
+.fan-speeds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fan-speed-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.fan-speed-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Roboto Mono', monospace;
+  color: #9b59b6;
+}
+
+.fan-speed-unit {
+  font-size: 8px;
+  color: var(--hud-text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.metric-value.unavailable {
+  font-size: 12px;
+  color: var(--hud-text-secondary);
+  opacity: 0.6;
 }

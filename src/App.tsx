@@ -136,6 +136,10 @@ function App() {
           onCheckUpdate={checkForUpdate}
           checkingUpdate={checking}
           updateMessage={updateMessage}
+          updateInfo={updateInfo}
+          onInstallUpdate={downloadAndInstall}
+          downloading={downloading}
+          downloadProgress={progress}
         />
       )}
       {showUpdateNotification && updateInfo?.available && !showSettings && (
