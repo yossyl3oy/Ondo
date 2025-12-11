@@ -44,10 +44,22 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         let wmi = WMIConnection::new(com).map_err(|e| format!("WMI connection failed: {:?}", e))?;
 
         // Get CPU info
-        let cpu = get_cpu_info(&wmi).ok();
+        let cpu = match get_cpu_info(&wmi) {
+            Ok(data) => Some(data),
+            Err(e) => {
+                eprintln!("[Hardware] CPU error: {}", e);
+                None
+            }
+        };
 
         // Get GPU info
-        let gpu = get_gpu_info(&wmi).ok();
+        let gpu = match get_gpu_info(&wmi) {
+            Ok(data) => Some(data),
+            Err(e) => {
+                eprintln!("[Hardware] GPU error: {}", e);
+                None
+            }
+        };
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

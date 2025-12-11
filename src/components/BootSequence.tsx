@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import "./BootSequence.css";
 
 interface BootLine {
@@ -7,8 +8,8 @@ interface BootLine {
   type: "system" | "status" | "highlight";
 }
 
-const BOOT_LINES: BootLine[] = [
-  { text: "ONDO SYSTEM v1.0.0", delay: 0, type: "highlight" },
+const createBootLines = (version: string): BootLine[] => [
+  { text: `ONDO SYSTEM v${version}`, delay: 0, type: "highlight" },
   { text: "Initializing hardware interface...", delay: 200, type: "system" },
   { text: "Connecting to sensor modules...", delay: 500, type: "system" },
   { text: "CPU sensor: ONLINE", delay: 800, type: "status" },
@@ -19,9 +20,16 @@ const BOOT_LINES: BootLine[] = [
 export function BootSequence() {
   const [visibleLines, setVisibleLines] = useState<number>(0);
   const [scanlineActive, setScanlineActive] = useState(true);
+  const [bootLines, setBootLines] = useState<BootLine[]>(createBootLines("1.1.6"));
 
   useEffect(() => {
-    BOOT_LINES.forEach((line, index) => {
+    getVersion().then((v) => {
+      setBootLines(createBootLines(v));
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    bootLines.forEach((line, index) => {
       setTimeout(() => {
         setVisibleLines(index + 1);
       }, line.delay);
@@ -31,7 +39,7 @@ export function BootSequence() {
     setTimeout(() => {
       setScanlineActive(false);
     }, 2500);
-  }, []);
+  }, [bootLines]);
 
   return (
     <div className="boot-sequence">
@@ -55,7 +63,7 @@ export function BootSequence() {
         </div>
 
         <div className="boot-content">
-          {BOOT_LINES.slice(0, visibleLines).map((line, index) => (
+          {bootLines.slice(0, visibleLines).map((line, index) => (
             <div
               key={index}
               className={`boot-line ${line.type}`}
@@ -74,7 +82,7 @@ export function BootSequence() {
         <div className="boot-progress">
           <div
             className="boot-progress-bar"
-            style={{ width: `${(visibleLines / BOOT_LINES.length) * 100}%` }}
+            style={{ width: `${(visibleLines / bootLines.length) * 100}%` }}
           />
         </div>
       </div>

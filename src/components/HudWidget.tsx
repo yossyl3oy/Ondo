@@ -24,7 +24,14 @@ export function HudWidget({
   const { cpu, gpu } = hardwareData;
 
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => {});
+    getVersion()
+      .then((v) => {
+        console.log("[HudWidget] Version:", v);
+        setVersion(v);
+      })
+      .catch((e) => {
+        console.error("[HudWidget] Version error:", e);
+      });
   }, []);
 
   const getTemperatureStatus = (temp: number, max: number) => {
@@ -100,11 +107,11 @@ export function HudWidget({
                   <div className="metric-divider" />
                   <div className="metric-item">
                     <span className="metric-label">LOAD</span>
-                    <span className="metric-value">{cpu.load}%</span>
+                    <span className="metric-value">{Math.round(cpu.load)}%</span>
                     <div className="metric-bar">
                       <div
                         className="metric-bar-fill"
-                        style={{ width: `${cpu.load}%` }}
+                        style={{ width: `${Math.round(cpu.load)}%` }}
                       />
                     </div>
                   </div>
@@ -140,11 +147,11 @@ export function HudWidget({
                   <div className="metric-divider" />
                   <div className="metric-item">
                     <span className="metric-label">LOAD</span>
-                    <span className="metric-value">{gpu.load}%</span>
+                    <span className="metric-value">{Math.round(gpu.load)}%</span>
                     <div className="metric-bar">
                       <div
                         className="metric-bar-fill gpu"
-                        style={{ width: `${gpu.load}%` }}
+                        style={{ width: `${Math.round(gpu.load)}%` }}
                       />
                     </div>
                   </div>

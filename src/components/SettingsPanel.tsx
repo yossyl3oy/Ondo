@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import type { AppSettings } from "../types";
 import "./SettingsPanel.css";
 
@@ -5,13 +7,23 @@ interface SettingsPanelProps {
   settings: AppSettings;
   onSettingsChange: (settings: Partial<AppSettings>) => void;
   onClose: () => void;
+  onCheckUpdate?: () => void;
+  checkingUpdate?: boolean;
 }
 
 export function SettingsPanel({
   settings,
   onSettingsChange,
   onClose,
+  onCheckUpdate,
+  checkingUpdate,
 }: SettingsPanelProps) {
+  const [version, setVersion] = useState("1.0.0");
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -153,10 +165,23 @@ export function SettingsPanel({
               <span className="toggle-slider" />
             </label>
           </div>
+
+          {/* Update Check Button */}
+          {onCheckUpdate && (
+            <div className="setting-group">
+              <button
+                className="setting-button"
+                onClick={onCheckUpdate}
+                disabled={checkingUpdate}
+              >
+                {checkingUpdate ? "Checking..." : "Check for Updates"}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="settings-footer">
-          <span className="settings-version">Ondo v1.0.0</span>
+          <span className="settings-version">Ondo v{version}</span>
         </div>
       </div>
     </div>

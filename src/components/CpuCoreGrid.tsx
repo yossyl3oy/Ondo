@@ -42,7 +42,7 @@ export function CpuCoreGrid({ cores, maxTemp }: CpuCoreGridProps) {
               className="core-temp-value"
               style={{ color: getTemperatureColor(core.temperature) }}
             >
-              {core.temperature}°
+              {Math.round(core.temperature)}°
             </span>
           </div>
         ))}

@@ -15,7 +15,7 @@ function App() {
   const [showUpdateNotification, setShowUpdateNotification] = useState(true);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
-  const { updateInfo, downloading, progress, error: updateError, downloadAndInstall } = useUpdater();
+  const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
 
   useEffect(() => {
     const bootTimer = setTimeout(() => {
@@ -61,6 +61,8 @@ function App() {
           settings={settings}
           onSettingsChange={updateSettings}
           onClose={() => setShowSettings(false)}
+          onCheckUpdate={checkForUpdate}
+          checkingUpdate={checking}
         />
       )}
       {showUpdateNotification && updateInfo?.available && !showSettings && (
