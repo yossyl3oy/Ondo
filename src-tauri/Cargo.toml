@@ -28,7 +28,6 @@ windows = { version = "0.58", features = [
     "Win32_System_Variant",
     "Win32_Security",
     "Win32_System_Pipes",
-    "Win32_Storage_FileSystem",
 ] }
 wmi = "0.14"
 

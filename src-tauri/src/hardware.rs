@@ -271,13 +271,15 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
-        use windows::Win32::System::Pipes::SetNamedPipeHandleState;
-        use windows::Win32::Storage::FileSystem::PIPE_NOWAIT;
+        use windows::Win32::System::Pipes::{SetNamedPipeHandleState, NAMED_PIPE_MODE};
         use windows::Win32::Foundation::HANDLE;
 
+        // PIPE_NOWAIT = 0x00000001
+        const PIPE_NOWAIT: u32 = 0x00000001;
+
         unsafe {
-            let handle = HANDLE(stdout.as_raw_handle());
-            let mut mode = PIPE_NOWAIT;
+            let handle = HANDLE(stdout.as_raw_handle() as *mut std::ffi::c_void);
+            let mut mode = NAMED_PIPE_MODE(PIPE_NOWAIT);
             let _ = SetNamedPipeHandleState(handle, Some(&mut mode), None, None);
         }
     }
