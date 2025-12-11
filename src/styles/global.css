@@ -1,5 +1,6 @@
-:root {
-  /* Iron Man HUD Colors - Light Theme */
+/* Light Theme (default) */
+:root,
+:root[data-theme="light"] {
   --hud-primary: #00b4d8;
   --hud-secondary: #0077b6;
   --hud-accent: #00f5ff;
@@ -15,9 +16,26 @@
   --hud-scanline: rgba(0, 180, 216, 0.1);
 }
 
+/* Dark Theme */
+:root[data-theme="dark"] {
+  --hud-primary: #00d4ff;
+  --hud-secondary: #0099cc;
+  --hud-accent: #00f5ff;
+  --hud-warning: #ff8c42;
+  --hud-danger: #ff3366;
+  --hud-success: #00ff9f;
+  --hud-background: rgba(10, 15, 30, 0.92);
+  --hud-surface: rgba(20, 30, 50, 0.95);
+  --hud-text: #e0f7ff;
+  --hud-text-secondary: #8ec8e8;
+  --hud-border: rgba(0, 212, 255, 0.5);
+  --hud-glow: rgba(0, 245, 255, 0.8);
+  --hud-scanline: rgba(0, 212, 255, 0.15);
+}
+
+/* Auto theme - follows system preference */
 @media (prefers-color-scheme: dark) {
-  :root {
-    /* Iron Man HUD Colors - Dark Theme */
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
     --hud-primary: #00d4ff;
     --hud-secondary: #0099cc;
     --hud-accent: #00f5ff;

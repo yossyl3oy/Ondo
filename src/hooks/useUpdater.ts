@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { captureUpdateError } from "../sentry";
 
 export interface UpdateInfo {
   available: boolean;
@@ -56,10 +57,12 @@ export function useUpdater() {
       }
     } catch (error) {
       console.error("[Updater] Error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Update check failed";
+      captureUpdateError(`check: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
         checking: false,
-        error: error instanceof Error ? error.message : "Update check failed",
+        error: errorMessage,
       }));
       return null;
     }
@@ -103,10 +106,12 @@ export function useUpdater() {
       // Relaunch the app after update
       await relaunch();
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Update failed";
+      captureUpdateError(`download: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
         downloading: false,
-        error: error instanceof Error ? error.message : "Update failed",
+        error: errorMessage,
       }));
     }
   }, []);

@@ -126,6 +126,59 @@ async fn set_auto_start(enabled: bool) -> Result<(), String> {
     settings::set_auto_start(enabled).await
 }
 
+#[tauri::command]
+async fn set_always_on_back(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        if enabled {
+            // Disable always on top first
+            window.set_always_on_top(false).map_err(|e| e.to_string())?;
+            // Set always on bottom
+            window.set_always_on_bottom(true).map_err(|e| e.to_string())?;
+        } else {
+            window.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowStateData {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[tauri::command]
+async fn get_window_state(app: AppHandle) -> Result<WindowStateData, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let position = window.outer_position().map_err(|e| e.to_string())?;
+        let size = window.outer_size().map_err(|e| e.to_string())?;
+        Ok(WindowStateData {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        })
+    } else {
+        Err("Window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_position(tauri::PhysicalPosition::new(state.x, state.y))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(tauri::PhysicalSize::new(state.width, state.height))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     let initial_settings = settings::load_settings_from_file()
         .unwrap_or_else(|_| settings::AppSettings::default());
@@ -133,6 +186,8 @@ fn main() {
     // Clone values we need for setup before moving into AppState
     let startup_position = initial_settings.position.clone();
     let startup_always_on_top = initial_settings.always_on_top;
+    let startup_always_on_back = initial_settings.always_on_back;
+    let startup_window_state = initial_settings.window_state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -147,11 +202,21 @@ fn main() {
 
             // Position window on startup
             if let Some(window) = app.get_webview_window("main") {
-                // Set initial position
-                let _ = set_initial_position(&window, &startup_position);
+                // Restore saved window state if available
+                if let Some(ref state) = startup_window_state {
+                    let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                    let _ = window.set_size(tauri::PhysicalSize::new(state.width, state.height));
+                } else {
+                    // Set initial position based on setting
+                    let _ = set_initial_position(&window, &startup_position);
+                }
 
-                // Set always on top
-                let _ = window.set_always_on_top(startup_always_on_top);
+                // Set always on top/back
+                if startup_always_on_back {
+                    let _ = window.set_always_on_bottom(true);
+                } else if startup_always_on_top {
+                    let _ = window.set_always_on_top(true);
+                }
             }
 
             Ok(())
@@ -161,8 +226,11 @@ fn main() {
             get_settings,
             save_settings,
             set_always_on_top,
+            set_always_on_back,
             set_window_position,
             set_auto_start,
+            get_window_state,
+            restore_window_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

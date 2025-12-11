@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HardwareData } from "../types";
+import { captureHardwareError } from "../sentry";
 
 interface UseHardwareDataResult {
   hardwareData: HardwareData;
@@ -19,15 +20,40 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
   const [hardwareData, setHardwareData] = useState<HardwareData>(INITIAL_DATA);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // エラーを一度だけ送信するためのフラグ
+  const errorReportedRef = useRef<{ invoke: boolean; nullData: boolean }>({
+    invoke: false,
+    nullData: false,
+  });
 
   const fetchData = useCallback(async () => {
     try {
       const data = await invoke<HardwareData>("get_hardware_data");
       setHardwareData(data);
       setError(null);
+
+      // CPU/GPUがnullの場合はエラーとしてSentryに送信（初回のみ）
+      if (!errorReportedRef.current.nullData) {
+        if (data.cpu === null && data.gpu === null) {
+          captureHardwareError("Both CPU and GPU data are null", "both");
+          errorReportedRef.current.nullData = true;
+        } else if (data.cpu === null) {
+          captureHardwareError("CPU data is null", "cpu");
+          errorReportedRef.current.nullData = true;
+        } else if (data.gpu === null) {
+          captureHardwareError("GPU data is null", "gpu");
+          errorReportedRef.current.nullData = true;
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
+
+      // invokeエラーをSentryに送信（初回のみ）
+      if (!errorReportedRef.current.invoke) {
+        captureHardwareError(`invoke error: ${errorMessage}`, "invoke");
+        errorReportedRef.current.invoke = true;
+      }
 
       // Use mock data in development for testing UI
       if (import.meta.env.DEV) {

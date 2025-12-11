@@ -120,7 +120,27 @@ export function SettingsPanel({
                 type="checkbox"
                 checked={settings.alwaysOnTop}
                 onChange={(e) =>
-                  onSettingsChange({ alwaysOnTop: e.target.checked })
+                  onSettingsChange({
+                    alwaysOnTop: e.target.checked,
+                    alwaysOnBack: e.target.checked ? false : settings.alwaysOnBack,
+                  })
+                }
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="setting-group toggle-group">
+            <label className="setting-toggle">
+              <span>Always on Back</span>
+              <input
+                type="checkbox"
+                checked={settings.alwaysOnBack}
+                onChange={(e) =>
+                  onSettingsChange({
+                    alwaysOnBack: e.target.checked,
+                    alwaysOnTop: e.target.checked ? false : settings.alwaysOnTop,
+                  })
                 }
               />
               <span className="toggle-slider" />

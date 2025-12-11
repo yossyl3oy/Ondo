@@ -2,17 +2,30 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowState {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub position: String,
     pub opacity: u32,
     pub always_on_top: bool,
+    #[serde(default)]
+    pub always_on_back: bool,
     pub auto_start: bool,
     pub show_cpu_cores: bool,
     pub update_interval: u32,
     pub theme: String,
     pub compact_mode: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_state: Option<WindowState>,
 }
 
 impl Default for AppSettings {
@@ -21,11 +34,13 @@ impl Default for AppSettings {
             position: "right".to_string(),
             opacity: 95,
             always_on_top: false,
+            always_on_back: false,
             auto_start: false,
             show_cpu_cores: false,
             update_interval: 1000,
             theme: "auto".to_string(),
             compact_mode: false,
+            window_state: None,
         }
     }
 }

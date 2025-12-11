@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Ondo",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "identifier": "com.ondo.hwmonitor",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -21,10 +21,10 @@
     "windows": [
       {
         "title": "Ondo",
-        "width": 180,
-        "height": 400,
-        "minWidth": 160,
-        "minHeight": 300,
+        "width": 200,
+        "height": 480,
+        "minWidth": 180,
+        "minHeight": 350,
         "resizable": true,
         "decorations": false,
         "transparent": true,

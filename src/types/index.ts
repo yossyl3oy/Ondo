@@ -35,21 +35,31 @@ export interface HardwareData {
   timestamp: number;
 }
 
+export interface WindowState {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface AppSettings {
   position: "right" | "left" | "top-right" | "top-left" | "bottom-right" | "bottom-left";
   opacity: number;
   alwaysOnTop: boolean;
+  alwaysOnBack: boolean;
   autoStart: boolean;
   showCpuCores: boolean;
   updateInterval: number;
   theme: "auto" | "dark" | "light";
   compactMode: boolean;
+  windowState?: WindowState;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   position: "right",
   opacity: 95,
   alwaysOnTop: false,
+  alwaysOnBack: false,
   autoStart: false,
   showCpuCores: false,
   updateInterval: 1000,

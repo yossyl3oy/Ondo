@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { HudWidget } from "./components/HudWidget";
 import { BootSequence } from "./components/BootSequence";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -7,6 +8,7 @@ import { UpdateNotification } from "./components/UpdateNotification";
 import { useHardwareData } from "./hooks/useHardwareData";
 import { useSettings } from "./hooks/useSettings";
 import { useUpdater } from "./hooks/useUpdater";
+import type { WindowState } from "./types";
 import "./styles/App.css";
 
 function App() {
@@ -49,6 +51,62 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  // Apply theme to document root
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === "auto") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.setAttribute("data-theme", settings.theme);
+    }
+  }, [settings.theme]);
+
+  // Save window state periodically and before close
+  const saveWindowStateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const saveWindowState = useCallback(async () => {
+    try {
+      const state = await invoke<WindowState>("get_window_state");
+      if (state) {
+        await updateSettings({ windowState: state });
+      }
+    } catch {
+      // Ignore errors
+    }
+  }, [updateSettings]);
+
+  // Save window state when app is about to close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveWindowState();
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [saveWindowState]);
+
+  // Periodically save window state (debounced)
+  useEffect(() => {
+    const handleResize = () => {
+      if (saveWindowStateRef.current) {
+        clearTimeout(saveWindowStateRef.current);
+      }
+      saveWindowStateRef.current = setTimeout(() => {
+        saveWindowState();
+      }, 1000);
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (saveWindowStateRef.current) {
+        clearTimeout(saveWindowStateRef.current);
+      }
+    };
+  }, [saveWindowState]);
 
   const handleSettingsToggle = () => {
     setShowSettings(!showSettings);

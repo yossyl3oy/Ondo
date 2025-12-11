@@ -39,11 +39,41 @@ struct Win32PerfFormattedDataProcessorInformation {
 
 #[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
+    // Use spawn_blocking to run WMI queries on a dedicated thread
+    // COM requires thread affinity, so we create a new connection each time
     tokio::task::spawn_blocking(|| {
-        let com = COMLibrary::new().map_err(|e| format!("COM init failed: {:?}", e))?;
-        let wmi = WMIConnection::new(com).map_err(|e| format!("WMI connection failed: {:?}", e))?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
 
-        // Get CPU info
+        // Initialize COM - if this fails, return empty data
+        let com = match COMLibrary::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[Hardware] COM init failed: {:?}", e);
+                return Ok(HardwareData {
+                    cpu: None,
+                    gpu: None,
+                    timestamp,
+                });
+            }
+        };
+
+        // Create WMI connection
+        let wmi = match WMIConnection::new(com) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[Hardware] WMI connection failed: {:?}", e);
+                return Ok(HardwareData {
+                    cpu: None,
+                    gpu: None,
+                    timestamp,
+                });
+            }
+        };
+
+        // Get CPU info with detailed logging
         let cpu = match get_cpu_info(&wmi) {
             Ok(data) => Some(data),
             Err(e) => {
@@ -52,7 +82,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             }
         };
 
-        // Get GPU info
+        // Get GPU info with detailed logging
         let gpu = match get_gpu_info(&wmi) {
             Ok(data) => Some(data),
             Err(e) => {
@@ -60,11 +90,6 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 None
             }
         };
-
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
 
         Ok(HardwareData {
             cpu,
