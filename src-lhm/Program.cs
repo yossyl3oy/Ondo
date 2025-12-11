@@ -29,21 +29,24 @@ class Program
 
     static void RunOnce()
     {
+        Computer? computer = null;
         try
         {
-            using var computer = CreateComputer();
+            computer = CreateComputer();
             computer.Open();
             computer.Accept(new UpdateVisitor());
 
             var data = ExtractData(computer);
             OutputJson(data);
-
-            computer.Close();
         }
         catch (Exception ex)
         {
             OutputError(ex.Message);
             Environment.Exit(1);
+        }
+        finally
+        {
+            computer?.Close();
         }
     }
 
