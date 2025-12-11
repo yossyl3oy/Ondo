@@ -72,6 +72,12 @@
   line-height: 1;
 }
 
+.gauge-value.unavailable {
+  font-size: 12px;
+  color: var(--hud-text-secondary);
+  opacity: 0.6;
+}
+
 .temp-gauge.warning .gauge-value {
   color: var(--hud-warning);
   text-shadow: 0 0 5px var(--hud-warning);

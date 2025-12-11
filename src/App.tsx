@@ -3,15 +3,19 @@ import { listen } from "@tauri-apps/api/event";
 import { HudWidget } from "./components/HudWidget";
 import { BootSequence } from "./components/BootSequence";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { UpdateNotification } from "./components/UpdateNotification";
 import { useHardwareData } from "./hooks/useHardwareData";
 import { useSettings } from "./hooks/useSettings";
+import { useUpdater } from "./hooks/useUpdater";
 import "./styles/App.css";
 
 function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showUpdateNotification, setShowUpdateNotification] = useState(true);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
+  const { updateInfo, downloading, progress, error: updateError, downloadAndInstall } = useUpdater();
 
   useEffect(() => {
     const bootTimer = setTimeout(() => {
@@ -57,6 +61,16 @@ function App() {
           settings={settings}
           onSettingsChange={updateSettings}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showUpdateNotification && updateInfo?.available && !showSettings && (
+        <UpdateNotification
+          updateInfo={updateInfo}
+          downloading={downloading}
+          progress={progress}
+          error={updateError}
+          onUpdate={downloadAndInstall}
+          onDismiss={() => setShowUpdateNotification(false)}
         />
       )}
     </div>
