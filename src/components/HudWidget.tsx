@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { useEffect } from "react";
 import type { HardwareData } from "../types";
 import { TemperatureGauge } from "./TemperatureGauge";
 import { CpuCoreGrid } from "./CpuCoreGrid";
@@ -18,7 +20,12 @@ export function HudWidget({
   onSettingsClick,
 }: HudWidgetProps) {
   const [showCores, setShowCores] = useState(false);
+  const [version, setVersion] = useState("1.0.0");
   const { cpu, gpu } = hardwareData;
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
 
   const getTemperatureStatus = (temp: number, max: number) => {
     const ratio = temp / max;
@@ -37,7 +44,7 @@ export function HudWidget({
         <div className="hud-title">
           <span className="hud-title-icon">◈</span>
           <span className="hud-title-text">ONDO</span>
-          <span className="hud-title-version">v1.0</span>
+          <span className="hud-title-version">v{version}</span>
         </div>
         <button
           className="hud-settings-btn"
