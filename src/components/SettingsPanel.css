@@ -1,0 +1,225 @@
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: overlayFadeIn 0.2s ease;
+}
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.settings-panel {
+  width: 90%;
+  max-width: 280px;
+  max-height: 90%;
+  background: var(--hud-background);
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  overflow: hidden;
+  animation: panelSlideIn 0.3s ease;
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.3), 0 0 60px var(--hud-glow);
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--hud-surface);
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.settings-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--hud-primary);
+}
+
+.settings-close {
+  background: transparent;
+  border: none;
+  color: var(--hud-text-secondary);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.settings-close:hover {
+  color: var(--hud-danger);
+  background: rgba(255, 0, 64, 0.1);
+}
+
+.settings-content {
+  padding: 16px;
+  overflow-y: auto;
+  max-height: 400px;
+}
+
+.setting-group {
+  margin-bottom: 16px;
+}
+
+.setting-group:last-child {
+  margin-bottom: 0;
+}
+
+.setting-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--hud-text-secondary);
+  margin-bottom: 6px;
+}
+
+.setting-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--hud-surface);
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  color: var(--hud-text);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.setting-select:focus {
+  border-color: var(--hud-primary);
+}
+
+.setting-select option {
+  background: var(--hud-surface);
+  color: var(--hud-text);
+}
+
+.setting-slider {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: var(--hud-border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.setting-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--hud-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--hud-glow);
+  transition: transform 0.2s ease;
+}
+
+.setting-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.setting-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--hud-primary);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--hud-glow);
+}
+
+/* Toggle switch */
+.toggle-group {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.toggle-group:last-child {
+  border-bottom: none;
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--hud-text);
+}
+
+.setting-toggle input {
+  display: none;
+}
+
+.toggle-slider {
+  position: relative;
+  width: 36px;
+  height: 18px;
+  background: var(--hud-border);
+  border-radius: 9px;
+  transition: background 0.3s ease;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--hud-text-secondary);
+  border-radius: 50%;
+  transition: transform 0.3s ease, background 0.3s ease;
+}
+
+.setting-toggle input:checked + .toggle-slider {
+  background: var(--hud-primary);
+}
+
+.setting-toggle input:checked + .toggle-slider::after {
+  transform: translateX(18px);
+  background: white;
+  box-shadow: 0 0 8px var(--hud-glow);
+}
+
+.settings-footer {
+  padding: 12px 16px;
+  background: var(--hud-surface);
+  border-top: 1px solid var(--hud-border);
+  text-align: center;
+}
+
+.settings-version {
+  font-size: 9px;
+  color: var(--hud-text-secondary);
+  letter-spacing: 1px;
+}

@@ -1,0 +1,90 @@
+.temp-gauge {
+  position: relative;
+  width: 64px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.gauge-value-arc {
+  stroke: var(--hud-primary);
+  filter: drop-shadow(0 0 3px var(--hud-glow));
+  transition: stroke 0.3s ease;
+}
+
+.temp-gauge.normal .gauge-value-arc {
+  stroke: var(--hud-primary);
+}
+
+.temp-gauge.warning .gauge-value-arc {
+  stroke: var(--hud-warning);
+  filter: drop-shadow(0 0 5px var(--hud-warning));
+  animation: warningFlash 1s ease-in-out infinite;
+}
+
+.temp-gauge.danger .gauge-value-arc {
+  stroke: var(--hud-danger);
+  filter: drop-shadow(0 0 8px var(--hud-danger));
+  animation: dangerFlash 0.5s ease-in-out infinite;
+}
+
+@keyframes warningFlash {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes dangerFlash {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px var(--hud-danger));
+  }
+  50% {
+    opacity: 0.8;
+    filter: drop-shadow(0 0 15px var(--hud-danger));
+  }
+}
+
+.gauge-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.gauge-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-text);
+  line-height: 1;
+}
+
+.temp-gauge.warning .gauge-value {
+  color: var(--hud-warning);
+  text-shadow: 0 0 5px var(--hud-warning);
+}
+
+.temp-gauge.danger .gauge-value {
+  color: var(--hud-danger);
+  text-shadow: 0 0 8px var(--hud-danger);
+}
+
+.gauge-label {
+  font-size: 7px;
+  letter-spacing: 1px;
+  color: var(--hud-text-secondary);
+  margin-top: 2px;
+}

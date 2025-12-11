@@ -1,0 +1,196 @@
+:root {
+  /* Iron Man HUD Colors - Light Theme */
+  --hud-primary: #00b4d8;
+  --hud-secondary: #0077b6;
+  --hud-accent: #00f5ff;
+  --hud-warning: #ff6b35;
+  --hud-danger: #ff0040;
+  --hud-success: #00ff88;
+  --hud-background: rgba(255, 255, 255, 0.85);
+  --hud-surface: rgba(240, 248, 255, 0.9);
+  --hud-text: #1a1a2e;
+  --hud-text-secondary: #4a4a6a;
+  --hud-border: rgba(0, 180, 216, 0.4);
+  --hud-glow: rgba(0, 245, 255, 0.6);
+  --hud-scanline: rgba(0, 180, 216, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Iron Man HUD Colors - Dark Theme */
+    --hud-primary: #00d4ff;
+    --hud-secondary: #0099cc;
+    --hud-accent: #00f5ff;
+    --hud-warning: #ff8c42;
+    --hud-danger: #ff3366;
+    --hud-success: #00ff9f;
+    --hud-background: rgba(10, 15, 30, 0.92);
+    --hud-surface: rgba(20, 30, 50, 0.95);
+    --hud-text: #e0f7ff;
+    --hud-text-secondary: #8ec8e8;
+    --hud-border: rgba(0, 212, 255, 0.5);
+    --hud-glow: rgba(0, 245, 255, 0.8);
+    --hud-scanline: rgba(0, 212, 255, 0.15);
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Segoe UI', 'Roboto Mono', monospace;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Scanline effect overlay */
+.scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    var(--hud-scanline) 2px,
+    var(--hud-scanline) 4px
+  );
+  animation: scanlineMove 8s linear infinite;
+  opacity: 0.5;
+  z-index: 1000;
+}
+
+@keyframes scanlineMove {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 100px;
+  }
+}
+
+/* Glow text effect */
+.glow-text {
+  text-shadow:
+    0 0 5px var(--hud-glow),
+    0 0 10px var(--hud-glow),
+    0 0 20px var(--hud-glow);
+}
+
+/* Holographic shimmer */
+@keyframes holographicShimmer {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* Boot sequence animations */
+@keyframes bootFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bootScanline {
+  0% {
+    transform: translateY(-100%);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh);
+    opacity: 0;
+  }
+}
+
+@keyframes glitchFlicker {
+  0%, 92%, 94%, 96%, 100% {
+    opacity: 1;
+  }
+  93%, 95% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes circuitPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 5px var(--hud-primary),
+      inset 0 0 5px transparent;
+  }
+  50% {
+    box-shadow:
+      0 0 15px var(--hud-accent),
+      inset 0 0 10px var(--hud-glow);
+  }
+}
+
+/* Value change animation */
+@keyframes valueUpdate {
+  0% {
+    color: var(--hud-accent);
+    text-shadow: 0 0 10px var(--hud-accent);
+  }
+  100% {
+    color: var(--hud-text);
+    text-shadow: none;
+  }
+}
+
+/* Temperature warning pulse */
+@keyframes warningPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--hud-warning);
+  }
+  50% {
+    box-shadow: 0 0 20px var(--hud-warning), 0 0 30px var(--hud-warning);
+  }
+}
+
+@keyframes dangerPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--hud-danger);
+  }
+  50% {
+    box-shadow: 0 0 25px var(--hud-danger), 0 0 40px var(--hud-danger);
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--hud-border);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hud-primary);
+}

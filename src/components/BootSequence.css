@@ -1,0 +1,254 @@
+.boot-sequence {
+  width: 100%;
+  height: 100%;
+  background: var(--hud-background);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Animated scan line that moves down */
+.boot-scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--hud-accent),
+    transparent
+  );
+  animation: bootScanline 1.5s ease-out forwards;
+  box-shadow: 0 0 20px var(--hud-accent), 0 0 40px var(--hud-primary);
+  z-index: 10;
+}
+
+/* Hexagonal frame corners */
+.boot-frame {
+  position: absolute;
+  inset: 20px;
+  pointer-events: none;
+}
+
+.hex-corner {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-color: var(--hud-primary);
+  border-style: solid;
+  opacity: 0;
+  animation: cornerFadeIn 0.5s ease forwards;
+}
+
+.hex-corner.top-left {
+  top: 0;
+  left: 0;
+  border-width: 2px 0 0 2px;
+  animation-delay: 0.3s;
+}
+
+.hex-corner.top-right {
+  top: 0;
+  right: 0;
+  border-width: 2px 2px 0 0;
+  animation-delay: 0.4s;
+}
+
+.hex-corner.bottom-left {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 2px 2px;
+  animation-delay: 0.5s;
+}
+
+.hex-corner.bottom-right {
+  bottom: 0;
+  right: 0;
+  border-width: 0 2px 2px 0;
+  animation-delay: 0.6s;
+}
+
+@keyframes cornerFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+}
+
+/* Boot terminal */
+.boot-terminal {
+  width: 90%;
+  max-width: 280px;
+  padding: 16px;
+  background: var(--hud-surface);
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  animation: terminalFadeIn 0.5s ease forwards;
+}
+
+@keyframes terminalFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.boot-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.boot-header-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--hud-primary),
+    transparent
+  );
+}
+
+.boot-header-text {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--hud-primary);
+  text-shadow: 0 0 10px var(--hud-glow);
+}
+
+.boot-content {
+  min-height: 120px;
+}
+
+.boot-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Consolas', 'Roboto Mono', monospace;
+  font-size: 11px;
+  line-height: 1.8;
+  animation: lineFadeIn 0.3s ease forwards;
+  opacity: 0;
+}
+
+@keyframes lineFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.boot-line.system {
+  color: var(--hud-text-secondary);
+}
+
+.boot-line.status {
+  color: var(--hud-success);
+}
+
+.boot-line.highlight {
+  color: var(--hud-accent);
+  text-shadow: 0 0 8px var(--hud-glow);
+}
+
+.boot-prefix {
+  color: var(--hud-primary);
+  font-weight: bold;
+}
+
+.boot-cursor {
+  animation: cursorBlink 0.8s infinite;
+  color: var(--hud-accent);
+}
+
+@keyframes cursorBlink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+/* Progress bar */
+.boot-progress {
+  margin-top: 16px;
+  height: 3px;
+  background: var(--hud-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.boot-progress-bar {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--hud-primary),
+    var(--hud-accent)
+  );
+  box-shadow: 0 0 10px var(--hud-accent);
+  transition: width 0.3s ease;
+}
+
+/* Decorative elements */
+.boot-decoration {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  opacity: 0;
+  animation: decoFadeIn 0.5s ease forwards;
+  animation-delay: 0.8s;
+}
+
+.boot-decoration.left {
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.boot-decoration.right {
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+@keyframes decoFadeIn {
+  to {
+    opacity: 0.4;
+  }
+}
+
+.deco-bar {
+  width: 3px;
+  height: 20px;
+  background: var(--hud-primary);
+  border-radius: 1px;
+}
+
+.deco-bar.short {
+  height: 10px;
+  opacity: 0.5;
+}
