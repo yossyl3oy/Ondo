@@ -82,7 +82,16 @@ class Program
             {
                 try
                 {
-                    _computer.Accept(_visitor);
+                    // Explicitly update all hardware and sub-hardware
+                    foreach (var hardware in _computer.Hardware)
+                    {
+                        hardware.Update();
+                        foreach (var subHardware in hardware.SubHardware)
+                        {
+                            subHardware.Update();
+                        }
+                    }
+
                     var data = ExtractData(_computer);
                     OutputJson(data);
                 }

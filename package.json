@@ -1,6 +1,6 @@
 {
   "name": "ondo",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "HUD-style hardware temperature monitoring widget",
   "type": "module",
   "scripts": {
