@@ -125,6 +125,17 @@ jobs:
           dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
           cp bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
 
+      - name: Configure resources for Windows
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json'));
+            config.bundle.resources = ['ondo-hwmon.exe'];
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
+          "
+
       - name: Cache WiX Toolset (Windows)
         if: matrix.platform == 'windows-latest'
         id: cache-wix

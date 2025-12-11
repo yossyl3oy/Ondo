@@ -1,12 +1,13 @@
 use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, FanData};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
 
 // LHM JSON response structures
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmResponse {
     cpu: Option<LhmCpuData>,
     gpu: Option<LhmGpuData>,
@@ -15,7 +16,7 @@ struct LhmResponse {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmCpuData {
     name: String,
     temperature: f32,
@@ -26,7 +27,7 @@ struct LhmCpuData {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmCpuCoreData {
     index: u32,
     temperature: f32,
@@ -34,7 +35,7 @@ struct LhmCpuCoreData {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmGpuData {
     name: String,
     temperature: f32,
@@ -46,7 +47,7 @@ struct LhmGpuData {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmStorageData {
     name: String,
     temperature: f32,
@@ -55,7 +56,7 @@ struct LhmStorageData {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmMotherboardData {
     name: String,
     temperature: f32,
@@ -63,11 +64,18 @@ struct LhmMotherboardData {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LhmFanData {
     name: String,
     speed: u32,
 }
+
+// Cache for LHM data (updated every 5 seconds)
+#[cfg(target_os = "windows")]
+static LHM_CACHE: Mutex<Option<(Instant, LhmResponse)>> = Mutex::new(None);
+
+#[cfg(target_os = "windows")]
+const LHM_CACHE_DURATION_SECS: u64 = 5;
 
 #[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
@@ -77,70 +85,68 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Try LHM CLI first
-        match get_hardware_from_lhm() {
-            Ok(lhm_data) => {
-                // Convert LHM data to our format
-                let cpu = lhm_data.cpu.map(|c| CpuData {
-                    name: c.name,
-                    temperature: c.temperature,
-                    max_temperature: c.max_temperature,
-                    load: c.load,
-                    frequency: c.frequency,
-                    cores: c.cores.map(|cores| {
-                        cores.into_iter().map(|core| CpuCoreData {
-                            index: core.index,
-                            temperature: core.temperature,
-                            load: core.load,
-                        }).collect()
-                    }).unwrap_or_default(),
-                });
+        // Try to get cached LHM data or fetch new data
+        let lhm_data = get_cached_lhm_data();
 
-                let gpu = lhm_data.gpu.map(|g| GpuData {
-                    name: g.name,
-                    temperature: g.temperature,
-                    max_temperature: g.max_temperature,
-                    load: g.load,
-                    frequency: g.frequency,
-                    memory_used: g.memory_used,
-                    memory_total: g.memory_total,
-                });
-
-                let storage = lhm_data.storage.map(|storages| {
-                    storages.into_iter().map(|s| StorageData {
-                        name: s.name,
-                        temperature: s.temperature,
-                        used_space: s.used_percent, // Store as percent for now
-                        total_space: s.total_space,
+        if let Some(lhm) = lhm_data {
+            // Use LHM data
+            let cpu = lhm.cpu.map(|c| CpuData {
+                name: c.name,
+                temperature: c.temperature,
+                max_temperature: c.max_temperature,
+                load: c.load,
+                frequency: c.frequency,
+                cores: c.cores.map(|cores| {
+                    cores.into_iter().map(|core| CpuCoreData {
+                        index: core.index,
+                        temperature: core.temperature,
+                        load: core.load,
                     }).collect()
-                });
+                }).unwrap_or_default(),
+            });
 
-                let motherboard = lhm_data.motherboard.map(|m| MotherboardData {
-                    name: m.name,
-                    temperature: m.temperature,
-                    fans: m.fans.map(|fans| {
-                        fans.into_iter().map(|f| FanData {
-                            name: f.name,
-                            speed: f.speed,
-                        }).collect()
-                    }).unwrap_or_default(),
-                });
+            let gpu = lhm.gpu.map(|g| GpuData {
+                name: g.name,
+                temperature: g.temperature,
+                max_temperature: g.max_temperature,
+                load: g.load,
+                frequency: g.frequency,
+                memory_used: g.memory_used,
+                memory_total: g.memory_total,
+            });
 
-                Ok(HardwareData {
-                    cpu,
-                    gpu,
-                    storage,
-                    motherboard,
-                    timestamp,
-                    cpu_error: None,
-                    gpu_error: None,
-                })
-            }
-            Err(lhm_err) => {
-                eprintln!("[Hardware] LHM CLI failed: {}, falling back to WMI", lhm_err);
-                // Fallback to WMI
-                get_hardware_from_wmi(timestamp)
-            }
+            let storage = lhm.storage.map(|storages| {
+                storages.into_iter().map(|s| StorageData {
+                    name: s.name,
+                    temperature: s.temperature,
+                    used_space: s.used_percent,
+                    total_space: s.total_space,
+                }).collect()
+            });
+
+            let motherboard = lhm.motherboard.map(|m| MotherboardData {
+                name: m.name,
+                temperature: m.temperature,
+                fans: m.fans.map(|fans| {
+                    fans.into_iter().map(|f| FanData {
+                        name: f.name,
+                        speed: f.speed,
+                    }).collect()
+                }).unwrap_or_default(),
+            });
+
+            Ok(HardwareData {
+                cpu,
+                gpu,
+                storage,
+                motherboard,
+                timestamp,
+                cpu_error: None,
+                gpu_error: None,
+            })
+        } else {
+            // Fallback to WMI
+            get_hardware_from_wmi(timestamp)
         }
     })
     .await
@@ -148,11 +154,38 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 }
 
 #[cfg(target_os = "windows")]
+fn get_cached_lhm_data() -> Option<LhmResponse> {
+    // Check cache first
+    {
+        let cache = LHM_CACHE.lock().ok()?;
+        if let Some((last_update, ref data)) = *cache {
+            if last_update.elapsed().as_secs() < LHM_CACHE_DURATION_SECS {
+                return Some(data.clone());
+            }
+        }
+    }
+
+    // Cache expired or empty, fetch new data
+    match get_hardware_from_lhm() {
+        Ok(data) => {
+            // Update cache
+            if let Ok(mut cache) = LHM_CACHE.lock() {
+                *cache = Some((Instant::now(), data.clone()));
+            }
+            Some(data)
+        }
+        Err(e) => {
+            eprintln!("[Hardware] LHM CLI failed: {}", e);
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn get_hardware_from_lhm() -> Result<LhmResponse, String> {
     use std::process::Command;
     use std::env;
 
-    // Find ondo-hwmon.exe next to the main executable
     let exe_path = env::current_exe().map_err(|e| format!("Cannot get exe path: {}", e))?;
     let exe_dir = exe_path.parent().ok_or("Cannot get exe directory")?;
     let lhm_path = exe_dir.join("ondo-hwmon.exe");
