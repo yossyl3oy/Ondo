@@ -111,9 +111,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
 #[cfg(target_os = "windows")]
 fn get_cpu_info(wmi: &WMIConnection) -> Result<CpuData, String> {
-    // Get basic CPU info
+    // Get basic CPU info using explicit query
     let processors: Vec<Win32Processor> = wmi
-        .query()
+        .raw_query("SELECT Name, LoadPercentage, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor")
         .map_err(|e| format!("CPU query failed: {:?}", e))?;
 
     let processor = processors.first().ok_or("No CPU found")?;
@@ -221,9 +221,9 @@ fn get_cpu_temperature(_wmi: &WMIConnection) -> Result<f32, String> {
 
 #[cfg(target_os = "windows")]
 fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
-    // Get GPU info from Win32_VideoController
+    // Get GPU info from Win32_VideoController using explicit query
     let gpus: Vec<Win32VideoController> = wmi
-        .query()
+        .raw_query("SELECT Name, AdapterRAM, DriverVersion FROM Win32_VideoController")
         .map_err(|e| format!("GPU query failed: {:?}", e))?;
 
     // Find a discrete GPU (skip integrated graphics if possible)
