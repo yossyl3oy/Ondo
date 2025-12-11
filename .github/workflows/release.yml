@@ -104,4 +104,5 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          includeUpdaterJson: true
           updaterJsonKeepUniversal: true
