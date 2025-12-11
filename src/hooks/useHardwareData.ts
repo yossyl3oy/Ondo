@@ -13,6 +13,8 @@ interface UseHardwareDataResult {
 const INITIAL_DATA: HardwareData = {
   cpu: null,
   gpu: null,
+  storage: null,
+  motherboard: null,
   timestamp: Date.now(),
 };
 
@@ -93,6 +95,7 @@ function generateMockData(): HardwareData {
       temperature: Math.round(baseTemp),
       maxTemperature: 95,
       load: Math.round(20 + Math.random() * 40),
+      frequency: 3.7 + Math.random() * 1.0,
       cores: Array.from({ length: 12 }, (_, i) => ({
         index: i,
         temperature: Math.round(baseTemp + (Math.random() - 0.5) * 10),
@@ -104,8 +107,25 @@ function generateMockData(): HardwareData {
       temperature: Math.round(gpuTemp),
       maxTemperature: 93,
       load: Math.round(15 + Math.random() * 50),
+      frequency: 1.7 + Math.random() * 0.5,
       memoryUsed: Math.round(4 + Math.random() * 4),
       memoryTotal: 10,
+    },
+    storage: [
+      {
+        name: "Samsung SSD 980 PRO 1TB",
+        temperature: 35 + Math.random() * 10,
+        usedSpace: 500,
+        totalSpace: 1000,
+      },
+    ],
+    motherboard: {
+      name: "ASUS ROG STRIX B550-F",
+      temperature: 40 + Math.random() * 15,
+      fans: [
+        { name: "CPU Fan", speed: 1200 + Math.round(Math.random() * 500) },
+        { name: "Chassis Fan 1", speed: 800 + Math.round(Math.random() * 300) },
+      ],
     },
     timestamp: Date.now(),
   };

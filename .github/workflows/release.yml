@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild even if release exists'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: write
@@ -12,8 +19,9 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.create-release.outputs.id }}
+      release_id: ${{ steps.create-release.outputs.id || steps.get-existing-release.outputs.id }}
       version: ${{ steps.get-version.outputs.version }}
+      is_rebuild: ${{ steps.check-release.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +37,18 @@ jobs:
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get existing release ID
+        id: get-existing-release
+        if: steps.check-release.outputs.exists == 'true' && github.event.inputs.force_rebuild == 'true'
+        run: |
+          RELEASE_ID=$(gh release view "v${{ steps.get-version.outputs.version }}" --json id -q '.id' 2>/dev/null || echo "")
+          # GitHub CLI returns database ID, we need to get the release ID from API
+          RELEASE_DATA=$(gh api repos/${{ github.repository }}/releases/tags/v${{ steps.get-version.outputs.version }})
+          RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+          echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,7 +77,7 @@ jobs:
 
   build-tauri:
     needs: create-release
-    if: needs.create-release.outputs.release_id != ''
+    if: needs.create-release.outputs.release_id != '' || github.event.inputs.force_rebuild == 'true'
     strategy:
       fail-fast: false
       matrix:
