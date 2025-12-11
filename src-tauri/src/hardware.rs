@@ -2,6 +2,9 @@ use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, Motherboar
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
+use crate::error_reporting;
+
+#[cfg(target_os = "windows")]
 use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
@@ -133,19 +136,33 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             let storage = lhm.storage.map(|storages| {
                 let wmi_storage = wmi_data.as_ref().and_then(|w| w.storage.as_ref());
                 storages.into_iter().map(|s| {
+                    // Find matching WMI storage for supplementing missing data
+                    let wmi_match = wmi_storage.and_then(|ws| {
+                        ws.iter().find(|w| {
+                            w.name.contains(&s.name) || s.name.contains(&w.name) ||
+                            // Also match by partial name (e.g., "Samsung" matches "Samsung SSD 980")
+                            w.name.split_whitespace().next().map(|first| s.name.contains(first)).unwrap_or(false)
+                        })
+                    });
+
                     // If LHM doesn't have total_space, try to find it from WMI
                     let total_space = if s.total_space > 0.0 {
                         s.total_space
                     } else {
-                        wmi_storage
-                            .and_then(|ws| ws.iter().find(|w| w.name.contains(&s.name) || s.name.contains(&w.name)))
-                            .map(|w| w.total_space)
-                            .unwrap_or(0.0)
+                        wmi_match.map(|w| w.total_space).unwrap_or(0.0)
                     };
+
+                    // If LHM doesn't have used_percent, try to find it from WMI
+                    let used_space = if s.used_percent > 0.0 {
+                        s.used_percent
+                    } else {
+                        wmi_match.map(|w| w.used_space).unwrap_or(0.0)
+                    };
+
                     StorageData {
                         name: s.name,
                         temperature: s.temperature,
-                        used_space: s.used_percent,
+                        used_space,
                         total_space,
                     }
                 }).collect()
@@ -219,6 +236,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
             }
             Err(e) => {
                 eprintln!("[Hardware] Failed to start LHM daemon: {}", e);
+                error_reporting::capture_lhm_error(&format!("Failed to start daemon: {}", e));
                 return None;
             }
         }
@@ -394,6 +412,16 @@ struct Win32DiskDrive {
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
+struct Win32LogicalDisk {
+    device_i_d: Option<String>,
+    size: Option<u64>,
+    free_space: Option<u64>,
+    volume_name: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
 struct Win32BaseBoard {
     manufacturer: Option<String>,
     product: Option<String>,
@@ -414,6 +442,7 @@ fn get_hardware_from_wmi(timestamp: u64) -> Result<HardwareData, String> {
         Ok(c) => c,
         Err(e) => {
             let error_msg = format!("COM init failed: {:?}", e);
+            error_reporting::capture_wmi_error(&error_msg, "com_init");
             return Ok(HardwareData {
                 cpu: None,
                 gpu: None,
@@ -430,6 +459,7 @@ fn get_hardware_from_wmi(timestamp: u64) -> Result<HardwareData, String> {
         Ok(w) => w,
         Err(e) => {
             let error_msg = format!("WMI connection failed: {:?}", e);
+            error_reporting::capture_wmi_error(&error_msg, "wmi_connection");
             return Ok(HardwareData {
                 cpu: None,
                 gpu: None,
@@ -444,12 +474,18 @@ fn get_hardware_from_wmi(timestamp: u64) -> Result<HardwareData, String> {
 
     let (cpu, cpu_error) = match get_cpu_info(&wmi) {
         Ok(data) => (Some(data), None),
-        Err(e) => (None, Some(e)),
+        Err(e) => {
+            error_reporting::capture_wmi_error(&e, "cpu_info");
+            (None, Some(e))
+        }
     };
 
     let (gpu, gpu_error) = match get_gpu_info(&wmi) {
         Ok(data) => (Some(data), None),
-        Err(e) => (None, Some(e)),
+        Err(e) => {
+            error_reporting::capture_wmi_error(&e, "gpu_info");
+            (None, Some(e))
+        }
     };
 
     let storage = get_storage_info(&wmi).ok();
@@ -542,6 +578,23 @@ fn get_core_loads(wmi: &WMIConnection, num_cores: u32) -> HashMap<u32, f32> {
 
 #[cfg(target_os = "windows")]
 fn get_cpu_temperature(_wmi: &WMIConnection) -> Result<f32, String> {
+    // Try MSAcpi_ThermalZoneTemperature first
+    if let Ok(temp) = get_cpu_temp_from_thermal_zone() {
+        if temp > 0.0 {
+            return Ok(temp);
+        }
+    }
+
+    // Fallback: Try PowerShell with Get-WmiObject
+    if let Some(temp) = get_cpu_temp_from_powershell() {
+        return Ok(temp);
+    }
+
+    Ok(0.0)
+}
+
+#[cfg(target_os = "windows")]
+fn get_cpu_temp_from_thermal_zone() -> Result<f32, String> {
     let com = COMLibrary::new().map_err(|e| format!("COM init failed: {:?}", e))?;
     let wmi_root = WMIConnection::with_namespace_path("root\\WMI", com)
         .map_err(|_| "Cannot connect to WMI namespace".to_string())?;
@@ -563,6 +616,39 @@ fn get_cpu_temperature(_wmi: &WMIConnection) -> Result<f32, String> {
 }
 
 #[cfg(target_os = "windows")]
+fn get_cpu_temp_from_powershell() -> Option<f32> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // Use PowerShell to query thermal zone temperature
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature 2>$null | Select-Object -ExpandProperty CurrentTemperature | Select-Object -First 1"
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(kelvin_tenths) = stdout.trim().parse::<f32>() {
+            let celsius = (kelvin_tenths / 10.0) - 273.15;
+            if celsius > 0.0 && celsius < 150.0 {
+                return Some(celsius);
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
 fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
     let gpus: Vec<Win32VideoController> = wmi
         .raw_query("SELECT Name, AdapterRAM FROM Win32_VideoController")
@@ -578,7 +664,11 @@ fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
 
     let name = gpu.name.clone().unwrap_or_else(|| "Unknown GPU".to_string());
     let memory_total = gpu.adapter_r_a_m.map(|m| m as f32 / 1_073_741_824.0).unwrap_or(0.0);
-    let (temperature, load, memory_used, frequency) = get_nvidia_smi_stats().unwrap_or((0.0, 0.0, 0.0, 0.0));
+
+    // Try NVIDIA first, then AMD
+    let (temperature, load, memory_used, frequency) = get_nvidia_smi_stats()
+        .or_else(get_amd_gpu_stats)
+        .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
     Ok(GpuData {
         name,
@@ -596,7 +686,6 @@ fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
     use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
 
-    // CREATE_NO_WINDOW flag to prevent console window from appearing
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = Command::new("nvidia-smi")
@@ -629,11 +718,63 @@ fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
     }
 }
 
+// AMD GPU stats using rocm-smi or fallback methods
+#[cfg(target_os = "windows")]
+fn get_amd_gpu_stats() -> Option<(f32, f32, f32, f32)> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // Try rocm-smi first (AMD's official tool)
+    let output = Command::new("rocm-smi")
+        .args(["--showtemp", "--showuse", "--showmeminfo", "vram", "--csv"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok();
+
+    if let Some(output) = output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Parse rocm-smi CSV output
+            // Format varies, but typically: device, temperature, GPU use %, memory used, memory total
+            for line in stdout.lines().skip(1) {
+                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                if parts.len() >= 4 {
+                    let temp = parts.get(1).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    let load = parts.get(2).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    let mem_used = parts.get(3).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    return Some((temp, load, mem_used / 1024.0, 0.0)); // Frequency not easily available
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn get_storage_info(wmi: &WMIConnection) -> Result<Vec<StorageData>, String> {
+    // Get physical disk info
     let disks: Vec<Win32DiskDrive> = wmi
         .raw_query("SELECT Model, Size FROM Win32_DiskDrive")
         .map_err(|e| format!("Storage query failed: {:?}", e))?;
+
+    // Get logical disk info for usage percentage
+    let logical_disks: Vec<Win32LogicalDisk> = wmi
+        .raw_query("SELECT DeviceID, Size, FreeSpace, VolumeName FROM Win32_LogicalDisk WHERE DriveType=3")
+        .unwrap_or_default();
+
+    // Calculate total used percentage from logical disks
+    let total_size: u64 = logical_disks.iter().filter_map(|d| d.size).sum();
+    let total_free: u64 = logical_disks.iter().filter_map(|d| d.free_space).sum();
+    let used_percent = if total_size > 0 {
+        ((total_size - total_free) as f32 / total_size as f32) * 100.0
+    } else {
+        0.0
+    };
 
     let storage_data: Vec<StorageData> = disks
         .iter()
@@ -643,7 +784,7 @@ fn get_storage_info(wmi: &WMIConnection) -> Result<Vec<StorageData>, String> {
             Some(StorageData {
                 name,
                 temperature: 0.0,
-                used_space: 0.0,
+                used_space: used_percent, // Use calculated percentage
                 total_space: total_gb,
             })
         })

@@ -347,7 +347,6 @@ class Program
     static StorageData? ExtractStorageData(IHardware hardware)
     {
         var storage = new StorageData { Name = hardware.Name };
-        bool hasData = false;
 
         foreach (var sensor in hardware.Sensors)
         {
@@ -358,13 +357,11 @@ class Program
             {
                 case SensorType.Temperature:
                     storage.Temperature = value;
-                    hasData = true;
                     break;
                 case SensorType.Load:
                     if (sensor.Name == "Used Space")
                     {
                         storage.UsedPercent = value;
-                        hasData = true;
                     }
                     break;
                 case SensorType.Data:
@@ -373,29 +370,26 @@ class Program
             }
         }
 
-        // Try to get drive capacity from hardware report
-        if (hardware.Name.Contains("GB"))
+        // Try to get drive capacity from hardware name (e.g., "Samsung SSD 980 PRO 1TB", "WD Blue 500GB")
+        var name = hardware.Name;
+        if (name.Contains("TB"))
         {
-            // Extract size from name like "Samsung SSD 980 PRO 1TB"
-            var name = hardware.Name;
-            if (name.Contains("TB"))
+            var tbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*TB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (tbMatch.Success && float.TryParse(tbMatch.Groups[1].Value, out float tb))
             {
-                var tbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)\s*TB");
-                if (tbMatch.Success && float.TryParse(tbMatch.Groups[1].Value, out float tb))
-                {
-                    storage.TotalSpace = tb * 1024; // Convert TB to GB
-                }
+                storage.TotalSpace = tb * 1024; // Convert TB to GB
             }
-            else if (name.Contains("GB"))
+        }
+        else if (name.Contains("GB"))
+        {
+            var gbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)\s*GB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (gbMatch.Success && float.TryParse(gbMatch.Groups[1].Value, out float gb))
             {
-                var gbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)\s*GB");
-                if (gbMatch.Success && float.TryParse(gbMatch.Groups[1].Value, out float gb))
-                {
-                    storage.TotalSpace = gb;
-                }
+                storage.TotalSpace = gb;
             }
         }
 
+        // Return storage data even if we only have the name (temperature/usage may be unavailable)
         return storage;
     }
 }

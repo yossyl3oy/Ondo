@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod error_reporting;
 mod hardware;
 mod settings;
 mod tray;
@@ -83,13 +84,36 @@ pub struct AppState {
 
 #[tauri::command]
 async fn get_hardware_data() -> Result<HardwareData, String> {
-    hardware::get_hardware_info().await
+    match hardware::get_hardware_info().await {
+        Ok(data) => {
+            // Report if both CPU and GPU are null (indicates a problem)
+            if data.cpu.is_none() && data.gpu.is_none() {
+                let error_detail = data.cpu_error.as_deref()
+                    .or(data.gpu_error.as_deref())
+                    .unwrap_or("Unknown error");
+                error_reporting::capture_hardware_error(
+                    &format!("Both CPU and GPU data unavailable: {}", error_detail),
+                    "both",
+                );
+            }
+            Ok(data)
+        }
+        Err(e) => {
+            error_reporting::capture_hardware_error(&e, "get_hardware_info");
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<settings::AppSettings, String> {
-    let settings = state.settings.lock().map_err(|e| e.to_string())?;
-    Ok(settings.clone())
+    state.settings.lock()
+        .map(|s| s.clone())
+        .map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_settings_error(&err, "get_settings");
+            err
+        })
 }
 
 #[tauri::command]
@@ -99,10 +123,17 @@ async fn save_settings(
 ) -> Result<(), String> {
     // Update state first, then drop the lock before await
     {
-        let mut current = state.settings.lock().map_err(|e| e.to_string())?;
+        let mut current = state.settings.lock().map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_settings_error(&err, "save_settings_lock");
+            err
+        })?;
         *current = settings.clone();
     }
-    settings::save_settings_to_file(&settings).await
+    settings::save_settings_to_file(&settings).await.map_err(|e| {
+        error_reporting::capture_settings_error(&e, "save_settings_file");
+        e
+    })
 }
 
 #[tauri::command]
@@ -110,7 +141,11 @@ async fn set_always_on_top(app: AppHandle, enabled: bool) -> Result<(), String> 
     if let Some(window) = app.get_webview_window("main") {
         window
             .set_always_on_top(enabled)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_always_on_top");
+                err
+            })?;
     }
     Ok(())
 }
@@ -120,11 +155,22 @@ async fn set_window_position(app: AppHandle, position: String) -> Result<(), Str
     if let Some(window) = app.get_webview_window("main") {
         let monitor = window
             .current_monitor()
-            .map_err(|e| e.to_string())?
-            .ok_or("No monitor found")?;
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_window_position_monitor");
+                err
+            })?
+            .ok_or_else(|| {
+                error_reporting::capture_window_error("No monitor found", "set_window_position");
+                "No monitor found".to_string()
+            })?;
 
         let monitor_size = monitor.size();
-        let window_size = window.outer_size().map_err(|e| e.to_string())?;
+        let window_size = window.outer_size().map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "set_window_position_size");
+            err
+        })?;
 
         let (x, y) = match position.as_str() {
             "left" => (0, (monitor_size.height - window_size.height) / 2),
@@ -147,14 +193,21 @@ async fn set_window_position(app: AppHandle, position: String) -> Result<(), Str
 
         window
             .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_window_position_set");
+                err
+            })?;
     }
     Ok(())
 }
 
 #[tauri::command]
 async fn set_auto_start(enabled: bool) -> Result<(), String> {
-    settings::set_auto_start(enabled).await
+    settings::set_auto_start(enabled).await.map_err(|e| {
+        error_reporting::capture_settings_error(&e, "set_auto_start");
+        e
+    })
 }
 
 #[tauri::command]
@@ -162,11 +215,23 @@ async fn set_always_on_back(app: AppHandle, enabled: bool) -> Result<(), String>
     if let Some(window) = app.get_webview_window("main") {
         if enabled {
             // Disable always on top first
-            window.set_always_on_top(false).map_err(|e| e.to_string())?;
+            window.set_always_on_top(false).map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_always_on_back_top");
+                err
+            })?;
             // Set always on bottom
-            window.set_always_on_bottom(true).map_err(|e| e.to_string())?;
+            window.set_always_on_bottom(true).map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_always_on_back_bottom");
+                err
+            })?;
         } else {
-            window.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+            window.set_always_on_bottom(false).map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_always_on_back_disable");
+                err
+            })?;
         }
     }
     Ok(())
@@ -184,8 +249,16 @@ pub struct WindowStateData {
 #[tauri::command]
 async fn get_window_state(app: AppHandle) -> Result<WindowStateData, String> {
     if let Some(window) = app.get_webview_window("main") {
-        let position = window.outer_position().map_err(|e| e.to_string())?;
-        let size = window.outer_size().map_err(|e| e.to_string())?;
+        let position = window.outer_position().map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "get_window_state_position");
+            err
+        })?;
+        let size = window.outer_size().map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "get_window_state_size");
+            err
+        })?;
         Ok(WindowStateData {
             x: position.x,
             y: position.y,
@@ -193,7 +266,9 @@ async fn get_window_state(app: AppHandle) -> Result<WindowStateData, String> {
             height: size.height,
         })
     } else {
-        Err("Window not found".to_string())
+        let err = "Window not found".to_string();
+        error_reporting::capture_window_error(&err, "get_window_state");
+        Err(err)
     }
 }
 
@@ -202,15 +277,26 @@ async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<
     if let Some(window) = app.get_webview_window("main") {
         window
             .set_position(tauri::PhysicalPosition::new(state.x, state.y))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "restore_window_state_position");
+                err
+            })?;
         window
             .set_size(tauri::PhysicalSize::new(state.width, state.height))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "restore_window_state_size");
+                err
+            })?;
     }
     Ok(())
 }
 
 fn main() {
+    // Initialize Sentry for error reporting
+    error_reporting::init_sentry();
+
     let initial_settings = settings::load_settings_from_file()
         .unwrap_or_else(|_| settings::AppSettings::default());
 
