@@ -263,8 +263,19 @@ fn main() {
             get_window_state,
             restore_window_state,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == "main" {
+                    // Shutdown LHM daemon when main window is destroyed
+                    hardware::shutdown_lhm_daemon();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    // Shutdown LHM daemon on app exit
+    hardware::shutdown_lhm_daemon();
 }
 
 fn set_initial_position(

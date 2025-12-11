@@ -6,30 +6,101 @@ namespace OndoHardwareMonitor;
 
 class Program
 {
+    static Computer? _computer;
+    static UpdateVisitor? _visitor;
+
     static void Main(string[] args)
+    {
+        // Daemon mode: --daemon [interval_ms]
+        if (args.Length > 0 && args[0] == "--daemon")
+        {
+            int intervalMs = 1000;
+            if (args.Length > 1 && int.TryParse(args[1], out int parsed))
+                intervalMs = Math.Max(100, parsed);
+
+            RunDaemon(intervalMs);
+        }
+        else
+        {
+            // Single-shot mode (backward compatible)
+            RunOnce();
+        }
+    }
+
+    static void RunOnce()
     {
         try
         {
-            var data = GetHardwareData();
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = false,
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-            };
-            Console.WriteLine(JsonSerializer.Serialize(data, options));
+            using var computer = CreateComputer();
+            computer.Open();
+            computer.Accept(new UpdateVisitor());
+
+            var data = ExtractData(computer);
+            OutputJson(data);
+
+            computer.Close();
         }
         catch (Exception ex)
         {
-            var error = new { error = ex.Message };
-            Console.WriteLine(JsonSerializer.Serialize(error));
+            OutputError(ex.Message);
             Environment.Exit(1);
         }
     }
 
-    static HardwareData GetHardwareData()
+    static void RunDaemon(int intervalMs)
     {
-        var computer = new Computer
+        try
+        {
+            _computer = CreateComputer();
+            _computer.Open();
+            _visitor = new UpdateVisitor();
+
+            // Handle graceful shutdown
+            Console.CancelKeyPress += (_, e) =>
+            {
+                e.Cancel = true;
+                _computer?.Close();
+                Environment.Exit(0);
+            };
+
+            // Also handle stdin close (parent process terminated)
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    while (Console.Read() != -1) { }
+                }
+                catch { }
+                _computer?.Close();
+                Environment.Exit(0);
+            });
+
+            while (true)
+            {
+                try
+                {
+                    _computer.Accept(_visitor);
+                    var data = ExtractData(_computer);
+                    OutputJson(data);
+                }
+                catch (Exception ex)
+                {
+                    OutputError(ex.Message);
+                }
+
+                Thread.Sleep(intervalMs);
+            }
+        }
+        catch (Exception ex)
+        {
+            OutputError(ex.Message);
+            Environment.Exit(1);
+        }
+    }
+
+    static Computer CreateComputer()
+    {
+        return new Computer
         {
             IsCpuEnabled = true,
             IsGpuEnabled = true,
@@ -38,10 +109,32 @@ class Program
             IsStorageEnabled = true,
             IsControllerEnabled = true
         };
+    }
 
-        computer.Open();
-        computer.Accept(new UpdateVisitor());
+    static void OutputJson(HardwareData data)
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+        Console.WriteLine(JsonSerializer.Serialize(data, options));
+    }
 
+    static void OutputError(string message)
+    {
+        var error = new { error = message };
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+        Console.WriteLine(JsonSerializer.Serialize(error, options));
+    }
+
+    static HardwareData ExtractData(Computer computer)
+    {
         var data = new HardwareData();
 
         foreach (var hardware in computer.Hardware)
@@ -69,7 +162,6 @@ class Program
             }
         }
 
-        computer.Close();
         return data;
     }
 
@@ -236,10 +328,6 @@ class Program
                     break;
             }
         }
-
-        // Get total space from hardware report if available
-        var report = hardware.GetReport();
-        // Parse capacity from report if needed
 
         return storage;
     }

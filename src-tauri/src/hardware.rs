@@ -1,5 +1,7 @@
 use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, FanData};
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(target_os = "windows")]
 use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
@@ -70,12 +72,21 @@ struct LhmFanData {
     speed: u32,
 }
 
-// Cache for LHM data (updated every 5 seconds)
+// LHM daemon process state
 #[cfg(target_os = "windows")]
-static LHM_CACHE: Mutex<Option<(Instant, LhmResponse)>> = Mutex::new(None);
+use std::process::{Child, ChildStdout};
+#[cfg(target_os = "windows")]
+use std::io::{BufReader, BufRead};
 
 #[cfg(target_os = "windows")]
-const LHM_CACHE_DURATION_SECS: u64 = 5;
+struct LhmDaemon {
+    process: Child,
+    reader: BufReader<ChildStdout>,
+    latest_data: Option<LhmResponse>,
+}
+
+#[cfg(target_os = "windows")]
+static LHM_DAEMON: Mutex<Option<LhmDaemon>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
@@ -85,8 +96,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Try to get cached LHM data or fetch new data
-        let lhm_data = get_cached_lhm_data();
+        // Try to get data from LHM daemon
+        let lhm_data = get_lhm_data();
 
         if let Some(lhm) = lhm_data {
             // Use LHM data
@@ -154,37 +165,87 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_cached_lhm_data() -> Option<LhmResponse> {
-    // Check cache first
-    {
-        let cache = LHM_CACHE.lock().ok()?;
-        if let Some((last_update, ref data)) = *cache {
-            if last_update.elapsed().as_secs() < LHM_CACHE_DURATION_SECS {
-                return Some(data.clone());
+fn get_lhm_data() -> Option<LhmResponse> {
+    let mut daemon_guard = LHM_DAEMON.lock().ok()?;
+
+    // Start daemon if not running
+    if daemon_guard.is_none() {
+        match start_lhm_daemon() {
+            Ok(daemon) => {
+                *daemon_guard = Some(daemon);
+            }
+            Err(e) => {
+                eprintln!("[Hardware] Failed to start LHM daemon: {}", e);
+                return None;
             }
         }
     }
 
-    // Cache expired or empty, fetch new data
-    match get_hardware_from_lhm() {
-        Ok(data) => {
-            // Update cache
-            if let Ok(mut cache) = LHM_CACHE.lock() {
-                *cache = Some((Instant::now(), data.clone()));
-            }
-            Some(data)
+    let daemon = daemon_guard.as_mut()?;
+
+    // Check if process is still running
+    match daemon.process.try_wait() {
+        Ok(Some(status)) => {
+            // Process exited, restart it
+            eprintln!("[Hardware] LHM daemon exited with status: {}, restarting...", status);
+            *daemon_guard = None;
+            return None;
+        }
+        Ok(None) => {
+            // Process still running, read latest line
         }
         Err(e) => {
-            eprintln!("[Hardware] LHM CLI failed: {}", e);
-            None
+            eprintln!("[Hardware] Failed to check LHM daemon status: {}", e);
+            *daemon_guard = None;
+            return None;
         }
     }
+
+    // Read all available lines and keep the latest one
+    let mut latest_line = None;
+    loop {
+        let mut line = String::new();
+        match daemon.reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    latest_line = Some(trimmed.to_string());
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) => {
+                eprintln!("[Hardware] Failed to read from LHM daemon: {}", e);
+                break;
+            }
+        }
+    }
+
+    // Parse the latest line if available
+    if let Some(line) = latest_line {
+        match serde_json::from_str::<LhmResponse>(&line) {
+            Ok(data) => {
+                daemon.latest_data = Some(data.clone());
+                return Some(data);
+            }
+            Err(e) => {
+                eprintln!("[Hardware] Failed to parse LHM JSON: {}", e);
+            }
+        }
+    }
+
+    // Return cached data if no new data available
+    daemon.latest_data.clone()
 }
 
 #[cfg(target_os = "windows")]
-fn get_hardware_from_lhm() -> Result<LhmResponse, String> {
-    use std::process::Command;
+fn start_lhm_daemon() -> Result<LhmDaemon, String> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
     use std::env;
+
+    // CREATE_NO_WINDOW flag to prevent console window from appearing
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let exe_path = env::current_exe().map_err(|e| format!("Cannot get exe path: {}", e))?;
     let exe_dir = exe_path.parent().ok_or("Cannot get exe directory")?;
@@ -194,18 +255,53 @@ fn get_hardware_from_lhm() -> Result<LhmResponse, String> {
         return Err(format!("LHM CLI not found at {:?}", lhm_path));
     }
 
-    let output = Command::new(&lhm_path)
-        .output()
-        .map_err(|e| format!("Failed to run LHM CLI: {}", e))?;
+    let mut child = Command::new(&lhm_path)
+        .args(["--daemon", "1000"]) // 1 second interval
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start LHM daemon: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("LHM CLI failed: {}", stderr));
+    let stdout = child.stdout.take()
+        .ok_or("Failed to capture LHM daemon stdout")?;
+
+    // Set stdout to non-blocking mode
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::System::Pipes::SetNamedPipeHandleState;
+        use windows::Win32::Storage::FileSystem::PIPE_NOWAIT;
+        use windows::Win32::Foundation::HANDLE;
+
+        unsafe {
+            let handle = HANDLE(stdout.as_raw_handle());
+            let mut mode = PIPE_NOWAIT;
+            let _ = SetNamedPipeHandleState(handle, Some(&mut mode), None, None);
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse LHM JSON: {}", e))
+    let reader = BufReader::new(stdout);
+
+    eprintln!("[Hardware] LHM daemon started successfully");
+
+    Ok(LhmDaemon {
+        process: child,
+        reader,
+        latest_data: None,
+    })
+}
+
+// Shutdown LHM daemon when app exits
+#[cfg(target_os = "windows")]
+pub fn shutdown_lhm_daemon() {
+    if let Ok(mut daemon_guard) = LHM_DAEMON.lock() {
+        if let Some(mut daemon) = daemon_guard.take() {
+            let _ = daemon.process.kill();
+            eprintln!("[Hardware] LHM daemon stopped");
+        }
+    }
 }
 
 // WMI fallback implementation
@@ -452,13 +548,20 @@ fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
 
 #[cfg(target_os = "windows")]
 fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+
+    // CREATE_NO_WINDOW flag to prevent console window from appearing
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = Command::new("nvidia-smi")
         .args([
             "--query-gpu=temperature.gpu,utilization.gpu,memory.used,clocks.gr",
             "--format=csv,noheader,nounits"
         ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
         .ok()?;
 
@@ -637,6 +740,11 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         cpu_error: None,
         gpu_error: None,
     })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn shutdown_lhm_daemon() {
+    // No-op on non-Windows
 }
 
 #[cfg(not(target_os = "windows"))]
