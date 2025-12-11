@@ -99,8 +99,11 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         // Try to get data from LHM daemon
         let lhm_data = get_lhm_data();
 
+        // Get WMI data for fallback/supplement
+        let wmi_data = get_hardware_from_wmi(timestamp).ok();
+
         if let Some(lhm) = lhm_data {
-            // Use LHM data
+            // Use LHM data, supplement with WMI where needed
             let cpu = lhm.cpu.map(|c| CpuData {
                 name: c.name,
                 temperature: c.temperature,
@@ -126,25 +129,55 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 memory_total: g.memory_total,
             });
 
+            // For storage: use LHM data, but supplement with WMI if LHM data is incomplete
             let storage = lhm.storage.map(|storages| {
-                storages.into_iter().map(|s| StorageData {
-                    name: s.name,
-                    temperature: s.temperature,
-                    used_space: s.used_percent,
-                    total_space: s.total_space,
+                let wmi_storage = wmi_data.as_ref().and_then(|w| w.storage.as_ref());
+                storages.into_iter().map(|s| {
+                    // If LHM doesn't have total_space, try to find it from WMI
+                    let total_space = if s.total_space > 0.0 {
+                        s.total_space
+                    } else {
+                        wmi_storage
+                            .and_then(|ws| ws.iter().find(|w| w.name.contains(&s.name) || s.name.contains(&w.name)))
+                            .map(|w| w.total_space)
+                            .unwrap_or(0.0)
+                    };
+                    StorageData {
+                        name: s.name,
+                        temperature: s.temperature,
+                        used_space: s.used_percent,
+                        total_space,
+                    }
                 }).collect()
             });
 
-            let motherboard = lhm.motherboard.map(|m| MotherboardData {
-                name: m.name,
-                temperature: m.temperature,
-                fans: m.fans.map(|fans| {
-                    fans.into_iter().map(|f| FanData {
-                        name: f.name,
-                        speed: f.speed,
-                    }).collect()
-                }).unwrap_or_default(),
-            });
+            // For motherboard: use LHM data, supplement with WMI for name if needed
+            let motherboard = lhm.motherboard.map(|m| {
+                let wmi_mb = wmi_data.as_ref().and_then(|w| w.motherboard.as_ref());
+                let name = if m.name.is_empty() || m.name == "Unknown" {
+                    wmi_mb.map(|w| w.name.clone()).unwrap_or(m.name)
+                } else {
+                    m.name
+                };
+                // Use WMI fans if LHM doesn't have any
+                let fans = m.fans.map(|fans| {
+                    if fans.is_empty() {
+                        wmi_mb.map(|w| w.fans.clone()).unwrap_or_default()
+                    } else {
+                        fans.into_iter().map(|f| FanData {
+                            name: f.name,
+                            speed: f.speed,
+                        }).collect()
+                    }
+                }).unwrap_or_else(|| {
+                    wmi_mb.map(|w| w.fans.clone()).unwrap_or_default()
+                });
+                MotherboardData {
+                    name,
+                    temperature: m.temperature,
+                    fans,
+                }
+            }).or_else(|| wmi_data.as_ref().and_then(|w| w.motherboard.clone()));
 
             Ok(HardwareData {
                 cpu,
@@ -155,9 +188,19 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 cpu_error: None,
                 gpu_error: None,
             })
+        } else if let Some(wmi) = wmi_data {
+            // Full fallback to WMI
+            Ok(wmi)
         } else {
-            // Fallback to WMI
-            get_hardware_from_wmi(timestamp)
+            Ok(HardwareData {
+                cpu: None,
+                gpu: None,
+                storage: None,
+                motherboard: None,
+                timestamp,
+                cpu_error: Some("Failed to get hardware data".to_string()),
+                gpu_error: Some("Failed to get hardware data".to_string()),
+            })
         }
     })
     .await

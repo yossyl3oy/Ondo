@@ -174,7 +174,7 @@ export function HudWidget({
                 <div className="gpu-memory">
                   <span className="memory-label">VRAM</span>
                   <span className="memory-value">
-                    {gpu.memoryUsed.toFixed(1)}/{gpu.memoryTotal}GB
+                    {gpu.memoryUsed.toFixed(1)}/{gpu.memoryTotal.toFixed(1)}GB
                   </span>
                   <div className="memory-bar">
                     <div
@@ -219,12 +219,12 @@ export function HudWidget({
                   <div className="metric-item">
                     <span className="metric-label">USED</span>
                     <span className="metric-value">
-                      {Math.round((drive.usedSpace / drive.totalSpace) * 100)}%
+                      {drive.usedSpace > 0 ? `${Math.round(drive.usedSpace)}%` : "0%"}
                     </span>
                     <div className="metric-bar">
                       <div
                         className="metric-bar-fill storage"
-                        style={{ width: `${(drive.usedSpace / drive.totalSpace) * 100}%` }}
+                        style={{ width: `${Math.min(drive.usedSpace, 100)}%` }}
                       />
                     </div>
                   </div>
@@ -233,7 +233,7 @@ export function HudWidget({
                 <div className="storage-capacity-info">
                   <span className="capacity-label">CAPACITY</span>
                   <span className="capacity-value">
-                    {drive.usedSpace.toFixed(0)}/{drive.totalSpace.toFixed(0)}GB
+                    {drive.totalSpace > 0 ? `${Math.round(drive.totalSpace)}GB` : "N/A"}
                   </span>
                 </div>
               </div>

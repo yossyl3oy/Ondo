@@ -173,6 +173,7 @@ class Program
         var cpu = new CpuData { Name = hardware.Name };
         var coreTemps = new Dictionary<int, float>();
         var coreLoads = new Dictionary<int, float>();
+        var coreClocks = new List<float>();
 
         foreach (var sensor in hardware.Sensors)
         {
@@ -187,9 +188,11 @@ class Program
                         if (int.TryParse(sensor.Name.Replace("Core #", "").Split(' ')[0], out int coreIndex))
                             coreTemps[coreIndex] = value;
                     }
-                    else if (sensor.Name.Contains("Package") || sensor.Name.Contains("CPU"))
+                    else if (sensor.Name.Contains("Package") || sensor.Name.Contains("CPU") || sensor.Name.Contains("CCD"))
                     {
-                        cpu.Temperature = value;
+                        // Use the highest package/CPU temp
+                        if (value > cpu.Temperature)
+                            cpu.Temperature = value;
                     }
                     break;
                 case SensorType.Load:
@@ -204,12 +207,19 @@ class Program
                     }
                     break;
                 case SensorType.Clock:
-                    if (sensor.Name.Contains("Core #1") || sensor.Name == "CPU Core")
+                    // Collect all core clocks for averaging
+                    if (sensor.Name.Contains("Core #"))
                     {
-                        cpu.Frequency = value / 1000f; // MHz to GHz
+                        coreClocks.Add(value);
                     }
                     break;
             }
+        }
+
+        // Calculate average frequency from all cores
+        if (coreClocks.Count > 0)
+        {
+            cpu.Frequency = coreClocks.Average() / 1000f; // MHz to GHz
         }
 
         // Build core data
@@ -248,19 +258,19 @@ class Program
             switch (sensor.SensorType)
             {
                 case SensorType.Temperature:
-                    if (sensor.Name.Contains("GPU Core") || sensor.Name == "GPU")
+                    if (sensor.Name.Contains("GPU Core") || sensor.Name == "GPU" || sensor.Name == "Temperature")
                         gpu.Temperature = value;
                     break;
                 case SensorType.Load:
-                    if (sensor.Name == "GPU Core")
+                    if (sensor.Name == "GPU Core" || sensor.Name == "GPU")
                         gpu.Load = value;
                     break;
                 case SensorType.Clock:
-                    if (sensor.Name == "GPU Core")
+                    if (sensor.Name == "GPU Core" || sensor.Name.Contains("GPU Core"))
                         gpu.Frequency = value / 1000f; // MHz to GHz
                     break;
                 case SensorType.SmallData:
-                    if (sensor.Name == "GPU Memory Used")
+                    if (sensor.Name == "GPU Memory Used" || sensor.Name == "D3D Dedicated Memory Used")
                         gpu.MemoryUsed = value / 1024f; // MB to GB
                     else if (sensor.Name == "GPU Memory Total")
                         gpu.MemoryTotal = value / 1024f; // MB to GB
@@ -275,11 +285,13 @@ class Program
     static MotherboardData ExtractMotherboardData(IHardware hardware)
     {
         var mb = new MotherboardData { Name = hardware.Name, Fans = new List<FanData>() };
+        var temps = new List<float>();
 
-        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware)
+        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware like SuperIO chips)
         foreach (var subHardware in hardware.SubHardware)
         {
             subHardware.Update();
+
             foreach (var sensor in subHardware.Sensors)
             {
                 if (sensor.Value == null) continue;
@@ -288,8 +300,17 @@ class Program
                 switch (sensor.SensorType)
                 {
                     case SensorType.Temperature:
-                        if (mb.Temperature == 0 && !sensor.Name.Contains("CPU"))
-                            mb.Temperature = value;
+                        // Collect motherboard-related temperatures (exclude CPU temps)
+                        if (!sensor.Name.Contains("CPU") && !sensor.Name.Contains("Core") && value > 0 && value < 150)
+                        {
+                            temps.Add(value);
+                            // Prefer specific motherboard temps
+                            if (sensor.Name.Contains("System") || sensor.Name.Contains("Motherboard") ||
+                                sensor.Name.Contains("Mainboard") || sensor.Name.Contains("PCH"))
+                            {
+                                mb.Temperature = value;
+                            }
+                        }
                         break;
                     case SensorType.Fan:
                         if (value > 0)
@@ -305,12 +326,19 @@ class Program
             }
         }
 
+        // If no specific temp found, use average of collected temps
+        if (mb.Temperature == 0 && temps.Count > 0)
+        {
+            mb.Temperature = temps.Average();
+        }
+
         return mb;
     }
 
     static StorageData? ExtractStorageData(IHardware hardware)
     {
         var storage = new StorageData { Name = hardware.Name };
+        bool hasData = false;
 
         foreach (var sensor in hardware.Sensors)
         {
@@ -321,14 +349,41 @@ class Program
             {
                 case SensorType.Temperature:
                     storage.Temperature = value;
+                    hasData = true;
                     break;
                 case SensorType.Load:
                     if (sensor.Name == "Used Space")
+                    {
                         storage.UsedPercent = value;
+                        hasData = true;
+                    }
                     break;
                 case SensorType.Data:
-                    // Data read/written - not used for now
+                    // Total Bytes Written/Read - can use to estimate drive health
                     break;
+            }
+        }
+
+        // Try to get drive capacity from hardware report
+        if (hardware.Name.Contains("GB"))
+        {
+            // Extract size from name like "Samsung SSD 980 PRO 1TB"
+            var name = hardware.Name;
+            if (name.Contains("TB"))
+            {
+                var tbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)\s*TB");
+                if (tbMatch.Success && float.TryParse(tbMatch.Groups[1].Value, out float tb))
+                {
+                    storage.TotalSpace = tb * 1024; // Convert TB to GB
+                }
+            }
+            else if (name.Contains("GB"))
+            {
+                var gbMatch = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)\s*GB");
+                if (gbMatch.Success && float.TryParse(gbMatch.Groups[1].Value, out float gb))
+                {
+                    storage.TotalSpace = gb;
+                }
             }
         }
 
