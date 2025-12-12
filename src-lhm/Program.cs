@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.PawnIo;
 
 namespace OndoHardwareMonitor;
 
@@ -11,6 +12,12 @@ class Program
 
     static void Main(string[] args)
     {
+        // Check PawnIO status: --check-pawnio
+        if (args.Length > 0 && args[0] == "--check-pawnio")
+        {
+            CheckPawnIO();
+            return;
+        }
         // Debug mode: --debug (list all sensors)
         if (args.Length > 0 && args[0] == "--debug")
         {
@@ -30,6 +37,23 @@ class Program
             // Single-shot mode (backward compatible)
             RunOnce();
         }
+    }
+
+    static void CheckPawnIO()
+    {
+        var result = new
+        {
+            installed = PawnIo.IsInstalled,
+            install_path = PawnIo.InstallPath ?? "",
+            version = PawnIo.Version().ToString(),
+            download_url = "https://pawnio.eu/"
+        };
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+        Console.WriteLine(JsonSerializer.Serialize(result, options));
     }
 
     static void RunDebug()

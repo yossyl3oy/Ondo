@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import type { AppSettings } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-shell";
+import type { AppSettings, PawnIOStatus } from "../types";
 import { testSentryError } from "../sentry";
 import "./SettingsPanel.css";
 
@@ -36,10 +38,33 @@ export function SettingsPanel({
   downloadProgress,
 }: SettingsPanelProps) {
   const [version, setVersion] = useState("1.0.0");
+  const [pawnioStatus, setPawnioStatus] = useState<PawnIOStatus | null>(null);
+  const [checkingPawnio, setCheckingPawnio] = useState(false);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
+
+    // Check PawnIO status on Windows
+    const checkPawnIO = async () => {
+      try {
+        setCheckingPawnio(true);
+        const status = await invoke<PawnIOStatus>("check_pawnio_status");
+        setPawnioStatus(status);
+      } catch {
+        // Not on Windows or error checking
+        setPawnioStatus(null);
+      } finally {
+        setCheckingPawnio(false);
+      }
+    };
+    checkPawnIO();
   }, []);
+
+  const handleInstallPawnIO = async () => {
+    if (pawnioStatus?.downloadUrl) {
+      await open(pawnioStatus.downloadUrl);
+    }
+  };
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -238,6 +263,32 @@ export function SettingsPanel({
                       Install Update v{updateInfo.version}
                     </button>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PawnIO Driver Status (Windows only) */}
+          {pawnioStatus !== null && (
+            <div className="setting-group pawnio-status">
+              <label className="setting-label">Hardware Driver (PawnIO)</label>
+              {checkingPawnio ? (
+                <div className="pawnio-checking">Checking...</div>
+              ) : pawnioStatus.installed ? (
+                <div className="pawnio-installed">
+                  <span className="pawnio-status-icon">✓</span>
+                  <span>Installed (v{pawnioStatus.version})</span>
+                </div>
+              ) : (
+                <div className="pawnio-not-installed">
+                  <span className="pawnio-status-icon">⚠</span>
+                  <span>Not installed - Some sensors may not work</span>
+                  <button
+                    className="setting-button setting-button-pawnio"
+                    onClick={handleInstallPawnIO}
+                  >
+                    Install PawnIO Driver
+                  </button>
                 </div>
               )}
             </div>

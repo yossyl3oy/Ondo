@@ -82,6 +82,15 @@ pub struct AppState {
     settings: Mutex<settings::AppSettings>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PawnIOStatus {
+    installed: bool,
+    install_path: String,
+    version: String,
+    download_url: String,
+}
+
 #[tauri::command]
 async fn get_hardware_data() -> Result<HardwareData, String> {
     match hardware::get_hardware_info().await {
@@ -103,6 +112,23 @@ async fn get_hardware_data() -> Result<HardwareData, String> {
             Err(e)
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
+    hardware::check_pawnio_status().await
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
+    Ok(PawnIOStatus {
+        installed: true, // Not needed on non-Windows
+        install_path: String::new(),
+        version: String::new(),
+        download_url: String::new(),
+    })
 }
 
 #[tauri::command]
@@ -340,6 +366,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_hardware_data,
+            check_pawnio_status,
             get_settings,
             save_settings,
             set_always_on_top,

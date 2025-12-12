@@ -1,0 +1,4 @@
+[submodule "src-lhm/LibreHardwareMonitor"]
+	path = src-lhm/LibreHardwareMonitor
+	url = https://github.com/namazso/LibreHardwareMonitor.git
+	branch = pawnio-squashed
