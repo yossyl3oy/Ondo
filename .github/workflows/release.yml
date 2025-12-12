@@ -156,8 +156,13 @@ jobs:
           Set-Content $csprojPath -Value $content -NoNewline
 
           dotnet --version
-          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
-          Copy-Item bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
+          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
+
+          # Debug: show what was built
+          Write-Host "=== Build output ==="
+          Get-ChildItem -Recurse -Filter "ondo-hwmon.exe" | ForEach-Object { Write-Host $_.FullName }
+
+          Copy-Item publish/ondo-hwmon.exe ../src-tauri/
 
       - name: Configure resources for Windows
         if: matrix.platform == 'windows-latest'
