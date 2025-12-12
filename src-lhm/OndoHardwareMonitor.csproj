@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Required for LibreHardwareMonitorLib embedded resources -->
+    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <TrimmerRootAssembly Include="LibreHardwareMonitorLib" />
   </ItemGroup>
 
