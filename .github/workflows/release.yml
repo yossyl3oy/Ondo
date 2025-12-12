@@ -124,7 +124,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: |
           cd src-lhm
-          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
+          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 -f net8.0 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
           cp bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
 
       - name: Configure resources for Windows

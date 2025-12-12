@@ -15,7 +15,8 @@
 
   <ItemGroup>
     <!-- Using PawnIO-enabled LibreHardwareMonitorLib from local submodule -->
-    <ProjectReference Include="LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj" />
+    <!-- SetTargetFramework ensures only net8.0 is built, avoiding net472 trimming error -->
+    <ProjectReference Include="LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj" SetTargetFramework="TargetFramework=net8.0" />
   </ItemGroup>
 
   <ItemGroup>
