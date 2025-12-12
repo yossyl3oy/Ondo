@@ -134,12 +134,16 @@ jobs:
 
       - name: Build LHM CLI (Windows)
         if: matrix.platform == 'windows-latest'
+        shell: pwsh
         run: |
           cd src-lhm
           # Override LibreHardwareMonitorLib to only build net8.0 (avoid net472 trimming error)
-          sed -i 's/<TargetFrameworks>.*<\/TargetFrameworks>/<TargetFramework>net8.0<\/TargetFramework>/' LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj
+          $csprojPath = "LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj"
+          $content = Get-Content $csprojPath -Raw
+          $content = $content -replace '<TargetFrameworks>[^<]+</TargetFrameworks>', '<TargetFramework>net8.0</TargetFramework>'
+          Set-Content $csprojPath -Value $content -NoNewline
           dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
-          cp bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
+          Copy-Item bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
 
       - name: Configure resources for Windows
         if: matrix.platform == 'windows-latest'
