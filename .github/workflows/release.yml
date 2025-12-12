@@ -137,11 +137,25 @@ jobs:
         shell: pwsh
         run: |
           cd src-lhm
+          # Create global.json to force .NET 8 SDK (avoid .NET 10 compatibility issues)
+          @'
+          {
+            "sdk": {
+              "version": "8.0.0",
+              "rollForward": "latestFeature"
+            }
+          }
+          '@ | Set-Content global.json
+
           # Override LibreHardwareMonitorLib to only build net8.0 (avoid net472 trimming error)
           $csprojPath = "LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj"
           $content = Get-Content $csprojPath -Raw
           $content = $content -replace '<TargetFrameworks>[^<]+</TargetFrameworks>', '<TargetFramework>net8.0</TargetFramework>'
+          # Remove GenerateResourceUsePreserializedResources (incompatible with .NET 8 trimming)
+          $content = $content -replace '<GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>', ''
           Set-Content $csprojPath -Value $content -NoNewline
+
+          dotnet --version
           dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
           Copy-Item bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
 
