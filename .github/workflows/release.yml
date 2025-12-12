@@ -29,26 +29,37 @@ jobs:
         id: get-version
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
-      - name: Check if release exists
+      - name: Check if release exists and is complete
         id: check-release
         run: |
           if gh release view "v${{ steps.get-version.outputs.version }}" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            # Check if release has all expected assets (Windows .msi, macOS .dmg files)
+            ASSETS=$(gh release view "v${{ steps.get-version.outputs.version }}" --json assets -q '.assets[].name' 2>/dev/null || echo "")
+            if echo "$ASSETS" | grep -q "\.msi" && echo "$ASSETS" | grep -q "\.dmg"; then
+              echo "complete=true" >> $GITHUB_OUTPUT
+              echo "Release is complete with all assets"
+            else
+              echo "complete=false" >> $GITHUB_OUTPUT
+              echo "Release exists but is incomplete (missing assets)"
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "complete=false" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get existing release ID
+      - name: Get existing release ID for rebuild
         id: get-existing-release
-        if: steps.check-release.outputs.exists == 'true' && github.event.inputs.force_rebuild == 'true'
+        if: steps.check-release.outputs.exists == 'true' && (github.event.inputs.force_rebuild == 'true' || steps.check-release.outputs.complete == 'false')
         run: |
           RELEASE_ID=$(gh release view "v${{ steps.get-version.outputs.version }}" --json id -q '.id' 2>/dev/null || echo "")
           # GitHub CLI returns database ID, we need to get the release ID from API
           RELEASE_DATA=$(gh api repos/${{ github.repository }}/releases/tags/v${{ steps.get-version.outputs.version }})
           RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
           echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
+          echo "Rebuilding release with ID: $RELEASE_ID"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -77,7 +88,8 @@ jobs:
 
   build-tauri:
     needs: create-release
-    if: needs.create-release.outputs.release_id != '' || github.event.inputs.force_rebuild == 'true'
+    # Build if: new release created, force rebuild requested, or release is incomplete
+    if: needs.create-release.outputs.release_id != ''
     strategy:
       fail-fast: false
       matrix:
@@ -124,7 +136,9 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: |
           cd src-lhm
-          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 -f net8.0 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
+          # Override LibreHardwareMonitorLib to only build net8.0 (avoid net472 trimming error)
+          sed -i 's/<TargetFrameworks>.*<\/TargetFrameworks>/<TargetFramework>net8.0<\/TargetFramework>/' LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj
+          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
           cp bin/Release/net8.0/win-x64/publish/ondo-hwmon.exe ../src-tauri/
 
       - name: Configure resources for Windows
