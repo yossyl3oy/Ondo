@@ -159,9 +159,16 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                         wmi_match.map(|w| w.used_space).unwrap_or(0.0)
                     };
 
+                    // If LHM doesn't have temperature, try to find it from WMI (PowerShell fallback)
+                    let temperature = if s.temperature > 0.0 {
+                        s.temperature
+                    } else {
+                        wmi_match.map(|w| w.temperature).unwrap_or(0.0)
+                    };
+
                     StorageData {
                         name: s.name,
-                        temperature: s.temperature,
+                        temperature,
                         used_space,
                         total_space,
                     }
@@ -776,15 +783,25 @@ fn get_storage_info(wmi: &WMIConnection) -> Result<Vec<StorageData>, String> {
         0.0
     };
 
+    // Try to get NVMe temperatures via PowerShell
+    let nvme_temps = get_nvme_temperatures();
+
     let storage_data: Vec<StorageData> = disks
         .iter()
         .filter_map(|disk| {
             let name = disk.model.clone()?;
             let total_gb = disk.size.map(|s| s as f32 / 1_073_741_824.0).unwrap_or(0.0);
+
+            // Try to find matching temperature from NVMe data
+            let temperature = nvme_temps.iter()
+                .find(|(model, _)| name.contains(model) || model.contains(&name))
+                .map(|(_, temp)| *temp)
+                .unwrap_or(0.0);
+
             Some(StorageData {
                 name,
-                temperature: 0.0,
-                used_space: used_percent, // Use calculated percentage
+                temperature,
+                used_space: used_percent,
                 total_space: total_gb,
             })
         })
@@ -795,6 +812,78 @@ fn get_storage_info(wmi: &WMIConnection) -> Result<Vec<StorageData>, String> {
     } else {
         Ok(storage_data)
     }
+}
+
+/// Get NVMe drive temperatures using PowerShell and Get-PhysicalDisk
+#[cfg(target_os = "windows")]
+fn get_nvme_temperatures() -> Vec<(String, f32)> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // PowerShell command to get disk temperatures
+    // Note: This requires Windows 10/11 and appropriate permissions
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            r#"Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object DeviceId, Temperature | ForEach-Object { "$($_.DeviceId),$($_.Temperature)" }"#
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let mut temps = Vec::new();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 2 {
+                    if let Ok(temp) = parts[1].trim().parse::<f32>() {
+                        // Get disk model name by DeviceId
+                        if let Ok(model) = get_disk_model_by_id(parts[0].trim()) {
+                            temps.push((model, temp));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    temps
+}
+
+/// Get disk model name by device ID
+#[cfg(target_os = "windows")]
+fn get_disk_model_by_id(device_id: &str) -> Result<String, ()> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(r#"(Get-PhysicalDisk | Where-Object DeviceId -eq '{}').FriendlyName"#, device_id)
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| ())?;
+
+    if output.status.success() {
+        let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !model.is_empty() {
+            return Ok(model);
+        }
+    }
+    Err(())
 }
 
 #[cfg(target_os = "windows")]

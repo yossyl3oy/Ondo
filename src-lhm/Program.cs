@@ -11,8 +11,13 @@ class Program
 
     static void Main(string[] args)
     {
+        // Debug mode: --debug (list all sensors)
+        if (args.Length > 0 && args[0] == "--debug")
+        {
+            RunDebug();
+        }
         // Daemon mode: --daemon [interval_ms]
-        if (args.Length > 0 && args[0] == "--daemon")
+        else if (args.Length > 0 && args[0] == "--daemon")
         {
             int intervalMs = 1000;
             if (args.Length > 1 && int.TryParse(args[1], out int parsed))
@@ -24,6 +29,50 @@ class Program
         {
             // Single-shot mode (backward compatible)
             RunOnce();
+        }
+    }
+
+    static void RunDebug()
+    {
+        Computer? computer = null;
+        try
+        {
+            computer = CreateComputer();
+            computer.Open();
+            computer.Accept(new UpdateVisitor());
+
+            Console.WriteLine("=== Hardware Debug Info ===\n");
+
+            foreach (var hardware in computer.Hardware)
+            {
+                Console.WriteLine($"Hardware: {hardware.Name} ({hardware.HardwareType})");
+
+                foreach (var sensor in hardware.Sensors)
+                {
+                    Console.WriteLine($"  Sensor: {sensor.Name} ({sensor.SensorType}) = {sensor.Value}");
+                }
+
+                foreach (var subHardware in hardware.SubHardware)
+                {
+                    Console.WriteLine($"  SubHardware: {subHardware.Name} ({subHardware.HardwareType})");
+                    subHardware.Update();
+
+                    foreach (var sensor in subHardware.Sensors)
+                    {
+                        Console.WriteLine($"    Sensor: {sensor.Name} ({sensor.SensorType}) = {sensor.Value}");
+                    }
+                }
+                Console.WriteLine();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            Environment.Exit(1);
+        }
+        finally
+        {
+            computer?.Close();
         }
     }
 
@@ -296,12 +345,10 @@ class Program
         var mb = new MotherboardData { Name = hardware.Name, Fans = new List<FanData>() };
         var temps = new List<float>();
 
-        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware like SuperIO chips)
-        foreach (var subHardware in hardware.SubHardware)
+        // Helper to process sensors from any hardware
+        void ProcessSensors(IHardware hw)
         {
-            subHardware.Update();
-
-            foreach (var sensor in subHardware.Sensors)
+            foreach (var sensor in hw.Sensors)
             {
                 if (sensor.Value == null) continue;
                 var value = sensor.Value.Value;
@@ -313,11 +360,20 @@ class Program
                         if (!sensor.Name.Contains("CPU") && !sensor.Name.Contains("Core") && value > 0 && value < 150)
                         {
                             temps.Add(value);
-                            // Prefer specific motherboard temps
-                            if (sensor.Name.Contains("System") || sensor.Name.Contains("Motherboard") ||
-                                sensor.Name.Contains("Mainboard") || sensor.Name.Contains("PCH"))
+                            // Prefer specific motherboard temps (expanded list)
+                            var lowerName = sensor.Name.ToLower();
+                            if (lowerName.Contains("system") || lowerName.Contains("motherboard") ||
+                                lowerName.Contains("mainboard") || lowerName.Contains("pch") ||
+                                lowerName.Contains("vrm") || lowerName.Contains("chipset") ||
+                                lowerName.Contains("mos") || lowerName.Contains("vsoc") ||
+                                lowerName.Contains("auxtin") || lowerName.Contains("temp1") ||
+                                sensor.Name.StartsWith("Temperature #"))
                             {
-                                mb.Temperature = value;
+                                // Use the first matching temp if not already set
+                                if (mb.Temperature == 0)
+                                {
+                                    mb.Temperature = value;
+                                }
                             }
                         }
                         break;
@@ -335,10 +391,28 @@ class Program
             }
         }
 
-        // If no specific temp found, use average of collected temps
+        // Check main hardware sensors first
+        ProcessSensors(hardware);
+
+        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware like SuperIO chips)
+        foreach (var subHardware in hardware.SubHardware)
+        {
+            subHardware.Update();
+            ProcessSensors(subHardware);
+
+            // Also check nested sub-hardware
+            foreach (var nestedSub in subHardware.SubHardware)
+            {
+                nestedSub.Update();
+                ProcessSensors(nestedSub);
+            }
+        }
+
+        // If no specific temp found, use first available temp or average
         if (mb.Temperature == 0 && temps.Count > 0)
         {
-            mb.Temperature = temps.Average();
+            // Use the first temperature as it's usually the most relevant
+            mb.Temperature = temps[0];
         }
 
         return mb;
@@ -348,26 +422,53 @@ class Program
     {
         var storage = new StorageData { Name = hardware.Name };
 
-        foreach (var sensor in hardware.Sensors)
+        // Helper to extract sensors from hardware
+        void ExtractSensors(IHardware hw)
         {
-            if (sensor.Value == null) continue;
-            var value = sensor.Value.Value;
-
-            switch (sensor.SensorType)
+            foreach (var sensor in hw.Sensors)
             {
-                case SensorType.Temperature:
-                    storage.Temperature = value;
-                    break;
-                case SensorType.Load:
-                    if (sensor.Name == "Used Space")
-                    {
-                        storage.UsedPercent = value;
-                    }
-                    break;
-                case SensorType.Data:
-                    // Total Bytes Written/Read - can use to estimate drive health
-                    break;
+                if (sensor.Value == null) continue;
+                var value = sensor.Value.Value;
+
+                switch (sensor.SensorType)
+                {
+                    case SensorType.Temperature:
+                        // Take any temperature sensor (NVMe drives may have multiple)
+                        if (value > 0 && value < 100 && storage.Temperature == 0)
+                        {
+                            storage.Temperature = value;
+                        }
+                        break;
+                    case SensorType.Load:
+                        if (sensor.Name == "Used Space" || sensor.Name.Contains("Used"))
+                        {
+                            storage.UsedPercent = value;
+                        }
+                        break;
+                    case SensorType.Level:
+                        // Some drives report temperature as Level (S.M.A.R.T. attribute 194)
+                        var lowerName = sensor.Name.ToLower();
+                        if ((lowerName.Contains("temperature") || lowerName.Contains("temp")) &&
+                            value > 0 && value < 100 && storage.Temperature == 0)
+                        {
+                            storage.Temperature = value;
+                        }
+                        break;
+                    case SensorType.Data:
+                        // Total Bytes Written/Read - can use to estimate drive health
+                        break;
+                }
             }
+        }
+
+        // Extract from main hardware
+        ExtractSensors(hardware);
+
+        // Also check sub-hardware (some drives have sensors in sub-hardware)
+        foreach (var subHardware in hardware.SubHardware)
+        {
+            subHardware.Update();
+            ExtractSensors(subHardware);
         }
 
         // Try to get drive capacity from hardware name (e.g., "Samsung SSD 980 PRO 1TB", "WD Blue 500GB")
