@@ -141,6 +141,17 @@ jobs:
           Get-ChildItem -Recurse -Filter "ondo-hwmon.exe" | ForEach-Object { Write-Host $_.FullName }
           Copy-Item publish/ondo-hwmon.exe ../src-tauri/
 
+      - name: Download PawnIO installer (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $pawnioUrl = "https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe"
+          $pawnioPath = "src-tauri/PawnIO_setup.exe"
+          Write-Host "Downloading PawnIO installer..."
+          Invoke-WebRequest -Uri $pawnioUrl -OutFile $pawnioPath -UseBasicParsing
+          Write-Host "PawnIO installer downloaded to $pawnioPath"
+          Get-Item $pawnioPath | Select-Object Name, Length
+
       - name: Configure resources for Windows
         if: matrix.platform == 'windows-latest'
         shell: bash
@@ -148,7 +159,7 @@ jobs:
           node -e "
             const fs = require('fs');
             const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json'));
-            config.bundle.resources = ['ondo-hwmon.exe'];
+            config.bundle.resources = ['ondo-hwmon.exe', 'PawnIO_setup.exe'];
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
           "
 

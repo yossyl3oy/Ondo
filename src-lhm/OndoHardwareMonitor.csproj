@@ -18,7 +18,7 @@
 
   <ItemGroup>
     <!-- Use prerelease NuGet package with PawnIO support (replaces WinRing0 blocked by Windows Defender) -->
-    <!-- PawnIO was introduced in 0.9.5-pre454 (commit eb5e1a2) -->
+    <!-- PawnIO driver must be installed separately from https://pawnio.eu/ -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.5-pre572" />
   </ItemGroup>
 

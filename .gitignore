@@ -37,6 +37,8 @@ src-tauri/target/
 src-tauri/WixTools/
 src-tauri/Cargo.lock
 src-tauri/ondo-hwmon.exe
+src-tauri/PawnIO_setup.exe
+src-tauri/resources/
 
 # C# LHM CLI build artifacts
 src-lhm/bin/

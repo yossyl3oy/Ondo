@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import type { AppSettings } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import type { AppSettings, PawnIOStatus } from "../types";
 import { testSentryError } from "../sentry";
 import "./SettingsPanel.css";
 
@@ -36,10 +37,44 @@ export function SettingsPanel({
   downloadProgress,
 }: SettingsPanelProps) {
   const [version, setVersion] = useState("1.0.0");
+  const [pawnioStatus, setPawnioStatus] = useState<PawnIOStatus | null>(null);
+  const [installingPawnio, setInstallingPawnio] = useState(false);
+  const [pawnioMessage, setPawnioMessage] = useState<string | null>(null);
+  // Detect Windows using navigator.userAgent (works in Tauri webview)
+  const isWindows = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
-  }, []);
+    // Check PawnIO status on Windows
+    if (isWindows) {
+      invoke<PawnIOStatus>("check_pawnio_status")
+        .then(setPawnioStatus)
+        .catch(() => {});
+    }
+  }, [isWindows]);
+
+  const handleInstallPawnIO = async () => {
+    setInstallingPawnio(true);
+    setPawnioMessage("Installing PawnIO driver...");
+    try {
+      const result = await invoke<string>("download_and_install_pawnio");
+      setPawnioMessage(result);
+    } catch (error) {
+      setPawnioMessage(`Error: ${error}`);
+    } finally {
+      setInstallingPawnio(false);
+    }
+  };
+
+  const handleRefreshPawnioStatus = async () => {
+    try {
+      const status = await invoke<PawnIOStatus>("check_pawnio_status");
+      setPawnioStatus(status);
+      setPawnioMessage(null);
+    } catch {
+      // Ignore errors
+    }
+  };
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -240,6 +275,45 @@ export function SettingsPanel({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* PawnIO Driver Info (Windows only) */}
+          {isWindows && (
+            <div className="setting-group pawnio-status">
+              <label className="setting-label">Hardware Driver (PawnIO)</label>
+              <div className="pawnio-info">
+                {pawnioStatus?.installed ? (
+                  <p className="pawnio-description pawnio-installed">
+                    PawnIO driver is installed and working.
+                  </p>
+                ) : (
+                  <>
+                    <p className="pawnio-description">
+                      PawnIO driver is required for full sensor support. If you see
+                      "Connecting..." or missing sensors, click below to install.
+                    </p>
+                    <button
+                      className="setting-button setting-button-pawnio"
+                      onClick={handleInstallPawnIO}
+                      disabled={installingPawnio}
+                    >
+                      {installingPawnio ? "Installing..." : "Install PawnIO Driver"}
+                    </button>
+                  </>
+                )}
+                {pawnioMessage && (
+                  <p className="pawnio-message">{pawnioMessage}</p>
+                )}
+                {pawnioMessage && !installingPawnio && (
+                  <button
+                    className="setting-button setting-button-refresh"
+                    onClick={handleRefreshPawnioStatus}
+                  >
+                    Check Status
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

@@ -210,6 +210,125 @@ async fn set_auto_start(enabled: bool) -> Result<(), String> {
     })
 }
 
+// PawnIO driver check and installation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PawnIOStatus {
+    installed: bool,
+    checking: bool,
+}
+
+#[cfg(target_os = "windows")]
+fn is_pawnio_installed() -> bool {
+    use std::process::Command;
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // Check if PawnIO driver is loaded by checking if the service exists
+    let output = Command::new("sc")
+        .args(["query", "PawnIO"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(output) = output {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // If the service exists and is running, it will contain "RUNNING" or "STATE"
+        return stdout.contains("STATE") || stdout.contains("RUNNING");
+    }
+
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_pawnio_installed() -> bool {
+    true // Always return true on non-Windows (PawnIO not needed)
+}
+
+#[tauri::command]
+async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
+    Ok(PawnIOStatus {
+        installed: is_pawnio_installed(),
+        checking: false,
+    })
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn download_and_install_pawnio() -> Result<String, String> {
+    // Get the bundled PawnIO installer path
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get exe path: {}", e))?;
+    let exe_dir = exe_path.parent()
+        .ok_or("Failed to get exe directory")?;
+
+    // In development, the resources are in src-tauri/resources
+    // In production, they're next to the exe
+    let installer_path = exe_dir.join("resources").join("PawnIO_setup.exe");
+    let installer_path = if installer_path.exists() {
+        installer_path
+    } else {
+        // Fallback to direct path (production build)
+        exe_dir.join("PawnIO_setup.exe")
+    };
+
+    if !installer_path.exists() {
+        return Err(format!("PawnIO installer not found at {:?}", installer_path));
+    }
+
+    // Run the installer with UAC elevation (ShellExecuteW with "runas")
+    // Use /S for silent installation
+    tokio::task::spawn_blocking(move || {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ffi::OsStr;
+
+        let path_wide: Vec<u16> = OsStr::new(installer_path.to_str().unwrap_or_default())
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let verb_wide: Vec<u16> = OsStr::new("runas")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        // Silent install parameter
+        let params_wide: Vec<u16> = OsStr::new("/S")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            use windows::core::PCWSTR;
+
+            let result = ShellExecuteW(
+                None,
+                PCWSTR(verb_wide.as_ptr()),
+                PCWSTR(path_wide.as_ptr()),
+                PCWSTR(params_wide.as_ptr()),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
+
+            // ShellExecuteW returns a value > 32 on success
+            if result.0 as isize <= 32 {
+                return Err(format!("Failed to launch installer (error code: {})", result.0 as isize));
+            }
+        }
+
+        Ok("PawnIO driver is being installed. Please restart Ondo after installation completes.".to_string())
+    })
+    .await
+    .map_err(|e| format!("Install task failed: {}", e))?
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn download_and_install_pawnio() -> Result<String, String> {
+    Ok("PawnIO is only required on Windows.".to_string())
+}
+
 #[tauri::command]
 async fn set_always_on_back(app: AppHandle, enabled: bool) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -348,6 +467,8 @@ fn main() {
             set_auto_start,
             get_window_state,
             restore_window_state,
+            check_pawnio_status,
+            download_and_install_pawnio,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

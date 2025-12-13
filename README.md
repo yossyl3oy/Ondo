@@ -68,15 +68,25 @@ The following options are available in the settings panel:
 
 ### Windows
 
-Temperature and hardware data is retrieved using [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with built-in [PawnIO](https://pawnio.eu/) driver support. This provides accurate sensor data for:
+Temperature and hardware data is retrieved using [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with [PawnIO](https://pawnio.eu/) driver support. This provides accurate sensor data for:
 - CPU: Temperature, load, frequency (per-core)
 - GPU: Temperature, load, frequency, VRAM usage
 - Storage: Temperature, used space
 - Motherboard: Temperature, fan speeds
 
-PawnIO is a modern, signed driver that replaces the legacy WinRing0 driver (which was blocked by Windows Defender starting March 2025). No manual driver installation is required - it's bundled with the application.
+#### PawnIO Driver (Bundled)
 
-WMI (Windows Management Instrumentation) is used as a fallback when sensor data is unavailable.
+PawnIO is a modern, signed driver that replaces the legacy WinRing0 driver (blocked by Windows Defender since March 2025 due to CVE-2020-14979).
+
+The PawnIO installer is bundled with Ondo. If sensors are not showing:
+1. Open Settings (gear icon)
+2. Click "Install PawnIO Driver"
+3. Accept the UAC prompt
+4. Restart Ondo
+
+Without PawnIO, the app will show "Connecting..." or some sensors may be unavailable. WMI is used as a fallback for basic data.
+
+PawnIO is licensed under GPL-2.0 and developed by [namazso](https://github.com/namazso/PawnIO).
 
 ### macOS
 Temperature data is retrieved using system APIs. Some sensors may not be available depending on hardware.

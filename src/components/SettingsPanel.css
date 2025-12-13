@@ -301,6 +301,65 @@
   color: var(--hud-text-secondary);
 }
 
+/* PawnIO Driver Section */
+.pawnio-status {
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--hud-surface);
+}
+
+.pawnio-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pawnio-description {
+  font-size: 10px;
+  color: var(--hud-text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.pawnio-installed {
+  color: var(--hud-success);
+}
+
+.pawnio-message {
+  font-size: 10px;
+  color: var(--hud-text);
+  margin: 0;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.setting-button-pawnio {
+  border-color: var(--hud-accent);
+  color: var(--hud-accent);
+}
+
+.setting-button-pawnio:hover:not(:disabled) {
+  background: var(--hud-accent);
+  color: var(--hud-background);
+  box-shadow: 0 0 12px rgba(0, 170, 255, 0.4);
+}
+
+.setting-button-refresh {
+  margin-top: 4px;
+  border-color: var(--hud-text-secondary);
+  color: var(--hud-text-secondary);
+  font-size: 10px;
+  padding: 6px 12px;
+}
+
+.setting-button-refresh:hover:not(:disabled) {
+  background: var(--hud-text-secondary);
+  color: var(--hud-background);
+}
+
 .settings-footer {
   padding: 12px 16px;
   background: var(--hud-surface);
