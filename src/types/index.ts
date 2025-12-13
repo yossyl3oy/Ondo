@@ -84,10 +84,3 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "auto",
   compactMode: false,
 };
-
-export interface PawnIOStatus {
-  installed: boolean;
-  installPath: string;
-  version: string;
-  downloadUrl: string;
-}

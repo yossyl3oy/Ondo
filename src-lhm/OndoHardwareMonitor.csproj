@@ -8,24 +8,18 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <PublishTrimmed>true</PublishTrimmed>
-    <TrimMode>partial</TrimMode>
+    <!-- Disable trimming - LibreHardwareMonitorLib has complex resources that break with trimming -->
+    <PublishTrimmed>false</PublishTrimmed>
     <AssemblyName>ondo-hwmon</AssemblyName>
+    <!-- Use ReadyToRun for faster startup instead of trimming -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Using PawnIO-enabled LibreHardwareMonitorLib from local submodule -->
-    <!-- SetTargetFramework ensures only net8.0 is built, avoiding net472 trimming error -->
-    <ProjectReference Include="LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj" SetTargetFramework="TargetFramework=net8.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Required for LibreHardwareMonitorLib embedded resources -->
-    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <TrimmerRootAssembly Include="LibreHardwareMonitorLib" />
+    <!-- Use prerelease NuGet package with PawnIO support (replaces WinRing0 blocked by Windows Defender) -->
+    <!-- PawnIO was introduced in 0.9.5-pre454 (commit eb5e1a2) -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.5-pre572" />
   </ItemGroup>
 
 </Project>

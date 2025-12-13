@@ -68,25 +68,15 @@ The following options are available in the settings panel:
 
 ### Windows
 
-Temperature and hardware data is retrieved using [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with [PawnIO](https://pawnio.eu/) driver support. This provides accurate sensor data for:
+Temperature and hardware data is retrieved using [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with built-in [PawnIO](https://pawnio.eu/) driver support. This provides accurate sensor data for:
 - CPU: Temperature, load, frequency (per-core)
 - GPU: Temperature, load, frequency, VRAM usage
 - Storage: Temperature, used space
 - Motherboard: Temperature, fan speeds
 
-#### PawnIO Driver (Recommended)
+PawnIO is a modern, signed driver that replaces the legacy WinRing0 driver (which was blocked by Windows Defender starting March 2025). No manual driver installation is required - it's bundled with the application.
 
-Starting from March 2025, Windows Defender blocks the legacy WinRing0 driver used by many hardware monitoring tools. Ondo uses PawnIO as a modern, signed replacement driver.
-
-**To enable full hardware monitoring:**
-1. Open Ondo Settings
-2. Check the "Hardware Driver (PawnIO)" section
-3. If not installed, click "Install PawnIO Driver" to download from [pawnio.eu](https://pawnio.eu/)
-4. Install PawnIO and restart Ondo
-
-Without PawnIO, some sensors (CPU temperature, motherboard temperature, fan speeds) may not be available. GPU and storage monitoring typically work without the driver.
-
-WMI (Windows Management Instrumentation) is used as a fallback when PawnIO/LHM data is unavailable.
+WMI (Windows Management Instrumentation) is used as a fallback when sensor data is unavailable.
 
 ### macOS
 Temperature data is retrieved using system APIs. Some sensors may not be available depending on hardware.
@@ -94,11 +84,9 @@ Temperature data is retrieved using system APIs. Some sensors may not be availab
 ## Development Setup
 
 ```bash
-# Clone with submodules (required for PawnIO-enabled LibreHardwareMonitor)
-git clone --recursive https://github.com/yossyl3oy/Ondo.git
-
-# Or if already cloned, initialize submodules
-git submodule update --init --recursive
+# Clone the repository
+git clone https://github.com/yossyl3oy/Ondo.git
+cd Ondo
 
 # Install dependencies
 npm install

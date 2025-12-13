@@ -107,13 +107,11 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '25.2.1'
           cache: 'npm'
 
       - name: Install Rust stable
@@ -137,31 +135,10 @@ jobs:
         shell: pwsh
         run: |
           cd src-lhm
-          # Create global.json to force .NET 8 SDK (avoid .NET 10 compatibility issues)
-          @'
-          {
-            "sdk": {
-              "version": "8.0.0",
-              "rollForward": "latestFeature"
-            }
-          }
-          '@ | Set-Content global.json
-
-          # Override LibreHardwareMonitorLib to only build net8.0 (avoid net472 trimming error)
-          $csprojPath = "LibreHardwareMonitor/LibreHardwareMonitorLib/LibreHardwareMonitorLib.csproj"
-          $content = Get-Content $csprojPath -Raw
-          $content = $content -replace '<TargetFrameworks>[^<]+</TargetFrameworks>', '<TargetFramework>net8.0</TargetFramework>'
-          # Remove GenerateResourceUsePreserializedResources (incompatible with .NET 8 trimming)
-          $content = $content -replace '<GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>', ''
-          Set-Content $csprojPath -Value $content -NoNewline
-
           dotnet --version
-          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
-
-          # Debug: show what was built
+          dotnet publish OndoHardwareMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish
           Write-Host "=== Build output ==="
           Get-ChildItem -Recurse -Filter "ondo-hwmon.exe" | ForEach-Object { Write-Host $_.FullName }
-
           Copy-Item publish/ondo-hwmon.exe ../src-tauri/
 
       - name: Configure resources for Windows

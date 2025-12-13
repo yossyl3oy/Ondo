@@ -1,4 +1,4 @@
-use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, FanData, PawnIOStatus};
+use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, FanData};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
@@ -372,40 +372,6 @@ pub fn shutdown_lhm_daemon() {
             eprintln!("[Hardware] LHM daemon stopped");
         }
     }
-}
-
-/// Check PawnIO driver installation status
-#[cfg(target_os = "windows")]
-pub async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
-    use std::process::{Command, Stdio};
-    use std::os::windows::process::CommandExt;
-    use std::env;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let exe_path = env::current_exe().map_err(|e| format!("Cannot get exe path: {}", e))?;
-    let exe_dir = exe_path.parent().ok_or("Cannot get exe directory")?;
-    let lhm_path = exe_dir.join("ondo-hwmon.exe");
-
-    if !lhm_path.exists() {
-        return Err(format!("LHM CLI not found at {:?}", lhm_path));
-    }
-
-    let output = Command::new(&lhm_path)
-        .args(["--check-pawnio"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("Failed to run PawnIO check: {}", e))?;
-
-    if !output.status.success() {
-        return Err("PawnIO check failed".to_string());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str::<PawnIOStatus>(stdout.trim())
-        .map_err(|e| format!("Failed to parse PawnIO status: {}", e))
 }
 
 // WMI fallback implementation
