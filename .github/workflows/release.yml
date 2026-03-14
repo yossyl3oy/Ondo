@@ -84,7 +84,7 @@ jobs:
             ### Changes
             See commit history for details.
           draft: false
-          prerelease: true
+          prerelease: false
 
   build-tauri:
     needs: create-release

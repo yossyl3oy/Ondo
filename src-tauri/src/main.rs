@@ -278,7 +278,7 @@ async fn download_and_install_pawnio() -> Result<String, String> {
     }
 
     // Run the installer with UAC elevation (ShellExecuteW with "runas")
-    // Use /S for silent installation
+    // Use -install -silent for PawnIO silent installation
     tokio::task::spawn_blocking(move || {
         use std::os::windows::ffi::OsStrExt;
         use std::ffi::OsStr;
@@ -293,8 +293,8 @@ async fn download_and_install_pawnio() -> Result<String, String> {
             .chain(std::iter::once(0))
             .collect();
 
-        // Silent install parameter
-        let params_wide: Vec<u16> = OsStr::new("/S")
+        // Silent install parameter (PawnIO uses -install -silent, not NSIS /S)
+        let params_wide: Vec<u16> = OsStr::new("-install -silent")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
