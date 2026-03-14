@@ -232,6 +232,7 @@ class Program
         var coreTemps = new Dictionary<int, float>();
         var coreLoads = new Dictionary<int, float>();
         var coreClocks = new List<float>();
+        float tjMax = 0f;
 
         foreach (var sensor in hardware.Sensors)
         {
@@ -243,12 +244,22 @@ class Program
                 case SensorType.Temperature:
                     if (sensor.Name.Contains("Core #"))
                     {
+                        // Per-core temperatures: "Core #0", "Core #1", etc.
                         if (int.TryParse(sensor.Name.Replace("Core #", "").Split(' ')[0], out int coreIndex))
                             coreTemps[coreIndex] = value;
                     }
-                    else if (sensor.Name.Contains("Package") || sensor.Name.Contains("CPU") || sensor.Name.Contains("CCD"))
+                    else if (sensor.Name == "TjMax" || sensor.Name.Contains("TjMax"))
                     {
-                        // Use the highest package/CPU temp
+                        // TjMax sensor (Intel CPUs report this)
+                        tjMax = value;
+                    }
+                    else if (sensor.Name.Contains("Package") || sensor.Name.Contains("CPU")
+                             || sensor.Name.Contains("CCD")
+                             || sensor.Name.Contains("Tctl") || sensor.Name.Contains("Tdie"))
+                    {
+                        // Package/die temperature:
+                        // Intel: "CPU Package", "CPU IA Cores"
+                        // AMD: "CPU (Tctl/Tdie)", "Core (Tctl)", "Core (Tdie)", "CCD 1 (Tdie)"
                         if (value > cpu.Temperature)
                             cpu.Temperature = value;
                     }
@@ -272,6 +283,12 @@ class Program
                     }
                     break;
             }
+        }
+
+        // If no package temp found, use average of core temps as fallback
+        if (cpu.Temperature == 0 && coreTemps.Count > 0)
+        {
+            cpu.Temperature = coreTemps.Values.Average();
         }
 
         // Calculate average frequency from all cores
@@ -300,7 +317,20 @@ class Program
             }
         }
 
-        cpu.MaxTemperature = 100f;
+        // Use TjMax from sensor if available, otherwise use CPU-family-based defaults
+        if (tjMax > 0)
+        {
+            cpu.MaxTemperature = tjMax;
+        }
+        else if (hardware.Name.Contains("Ryzen") || hardware.Name.Contains("AMD"))
+        {
+            cpu.MaxTemperature = 95f; // AMD Ryzen TjMax is typically 95°C
+        }
+        else
+        {
+            cpu.MaxTemperature = 100f; // Intel TjMax is typically 100°C
+        }
+
         return cpu;
     }
 
@@ -434,7 +464,7 @@ class Program
                 {
                     case SensorType.Temperature:
                         // Take any temperature sensor (NVMe drives may have multiple)
-                        if (value > 0 && value < 100 && storage.Temperature == 0)
+                        if (value > 0 && value < 150 && storage.Temperature == 0)
                         {
                             storage.Temperature = value;
                         }

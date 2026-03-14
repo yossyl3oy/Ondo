@@ -1,4 +1,7 @@
-use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, FanData};
+use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData};
+
+#[cfg(target_os = "windows")]
+use crate::FanData;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
@@ -954,86 +957,353 @@ fn get_fan_speeds(wmi: &WMIConnection) -> Vec<FanData> {
     Vec::new()
 }
 
-// Non-Windows fallback implementation
-#[cfg(not(target_os = "windows"))]
+// macOS implementation using sysinfo for real hardware monitoring
+#[cfg(target_os = "macos")]
+use sysinfo::{System, Components, Disks};
+
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
+
+#[cfg(target_os = "macos")]
+struct MacOsMonitor {
+    system: System,
+    components: Components,
+    disks: Disks,
+    gpu_name: String,
+    gpu_memory_total: f32,
+    model_name: String,
+    initialized: bool,
+}
+
+#[cfg(target_os = "macos")]
+static MACOS_MONITOR: Mutex<Option<MacOsMonitor>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+fn init_macos_monitor() -> MacOsMonitor {
+    let mut system = System::new();
+    system.refresh_cpu_all();
+
+    let components = Components::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list();
+
+    // Log available temperature sensors for debugging
+    for comp in components.iter() {
+        eprintln!("[macOS] Temperature sensor: {} = {}°C", comp.label(), comp.temperature());
+    }
+
+    let (gpu_name, gpu_memory_total) = get_macos_gpu_info();
+    let model_name = get_macos_model_name();
+
+    eprintln!("[macOS] GPU: {} ({:.1} GB)", gpu_name, gpu_memory_total);
+    eprintln!("[macOS] Model: {}", model_name);
+
+    MacOsMonitor {
+        system,
+        components,
+        disks,
+        gpu_name,
+        gpu_memory_total,
+        model_name,
+        initialized: false,
+    }
+}
+
+/// Classify a temperature sensor label into a hardware category
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq)]
+enum TempKind {
+    Cpu,
+    Gpu,
+    Storage,
+    Board,
+}
+
+#[cfg(target_os = "macos")]
+fn classify_temperature(label: &str) -> TempKind {
+    let l = label.to_lowercase();
+
+    // CPU-related sensors
+    // Intel: "TC0P" (CPU proximity), "TC0D" (CPU die), "TC0E", "TC0F"
+    // Apple Silicon: "Tp01"-"Tp0T" (CPU cluster temps), "SOC MTR Temp"
+    if l.contains("cpu") || l.contains("processor")
+        || l.starts_with("tc0") || l.starts_with("tc1")
+        || (l.starts_with("tp") && l.len() <= 6)
+        || l.contains("soc mtr temp") || l.contains("pcore") || l.contains("ecore")
+    {
+        TempKind::Cpu
+    }
+    // GPU-related sensors
+    // Intel Mac: "TG0P" (GPU proximity), "TG0D" (GPU die)
+    // Apple Silicon: "Tg05", "Tg0D" etc.
+    else if l.contains("gpu") || l.starts_with("tg") {
+        TempKind::Gpu
+    }
+    // Storage-related
+    else if l.contains("ssd") || l.contains("disk") || l.contains("nand")
+        || l.starts_with("th") || l.contains("hdd")
+    {
+        TempKind::Storage
+    }
+    // Board/system/other
+    else {
+        TempKind::Board
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    tokio::task::spawn_blocking(|| {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
 
-    let base_temp = 45.0 + (rand_float() * 20.0);
-    let gpu_temp = 50.0 + (rand_float() * 25.0);
+        let mut monitor_guard = MACOS_MONITOR.lock()
+            .map_err(|e| format!("Monitor lock failed: {}", e))?;
 
-    Ok(HardwareData {
-        cpu: Some(CpuData {
-            name: "AMD Ryzen 9 5900X".to_string(),
-            temperature: base_temp,
-            max_temperature: 95.0,
-            load: 20.0 + (rand_float() * 40.0),
-            frequency: 3.7 + (rand_float() * 1.0),
-            cores: (0..12)
-                .map(|i| CpuCoreData {
-                    index: i,
-                    temperature: base_temp + (rand_float() - 0.5) * 10.0,
-                    load: rand_float() * 100.0,
-                })
-                .collect(),
-        }),
-        gpu: Some(GpuData {
-            name: "NVIDIA GeForce RTX 3080".to_string(),
-            temperature: gpu_temp,
-            max_temperature: 93.0,
-            load: 15.0 + (rand_float() * 50.0),
-            frequency: 1.7 + (rand_float() * 0.5),
-            memory_used: 4.0 + (rand_float() * 4.0),
-            memory_total: 10.0,
-        }),
-        storage: Some(vec![
-            StorageData {
-                name: "Samsung SSD 980 PRO 1TB".to_string(),
-                temperature: 35.0 + (rand_float() * 10.0),
-                used_space: 500.0,
-                total_space: 1000.0,
-            },
-        ]),
-        motherboard: Some(MotherboardData {
-            name: "ASUS ROG STRIX B550-F".to_string(),
-            temperature: 40.0 + (rand_float() * 15.0),
-            fans: vec![
-                FanData {
-                    name: "CPU Fan".to_string(),
-                    speed: 1200 + (rand_float() * 500.0) as u32,
+        if monitor_guard.is_none() {
+            *monitor_guard = Some(init_macos_monitor());
+        }
+
+        let monitor = monitor_guard.as_mut().unwrap();
+
+        // Refresh sensor data
+        monitor.system.refresh_cpu_usage();
+        monitor.components.refresh_list();
+        monitor.disks.refresh_list();
+
+        // On first call, CPU usage is always 0% — mark as initialized for subsequent calls
+        if !monitor.initialized {
+            monitor.initialized = true;
+        }
+
+        // Collect temperatures by category
+        let mut cpu_temps = Vec::new();
+        let mut gpu_temps = Vec::new();
+        let mut storage_temps = Vec::new();
+        let mut board_temps = Vec::new();
+
+        for comp in monitor.components.iter() {
+            let temp = comp.temperature();
+            if temp <= 0.0 || temp > 150.0 { continue; }
+
+            match classify_temperature(comp.label()) {
+                TempKind::Cpu => cpu_temps.push(temp),
+                TempKind::Gpu => gpu_temps.push(temp),
+                TempKind::Storage => storage_temps.push(temp),
+                TempKind::Board => board_temps.push(temp),
+            }
+        }
+
+        // Use max CPU temp (most representative of thermal throttling risk)
+        let cpu_temp = cpu_temps.iter().cloned().fold(0.0f32, f32::max);
+        let gpu_temp = gpu_temps.iter().cloned().fold(0.0f32, f32::max);
+        let board_temp = if !board_temps.is_empty() {
+            board_temps.iter().sum::<f32>() / board_temps.len() as f32
+        } else {
+            0.0
+        };
+
+        // CPU data
+        let cpus = monitor.system.cpus();
+        let cpu_name = cpus.first()
+            .map(|c| c.brand().to_string())
+            .unwrap_or_default();
+        let cpu_load = monitor.system.global_cpu_usage();
+        let cpu_freq = if !cpus.is_empty() {
+            let total_freq: u64 = cpus.iter().map(|c| c.frequency()).sum();
+            (total_freq as f32 / cpus.len() as f32) / 1000.0 // MHz to GHz
+        } else {
+            0.0
+        };
+
+        let num_cpus = cpus.len();
+        let cores: Vec<CpuCoreData> = cpus.iter().enumerate().map(|(i, cpu)| {
+            // Estimate per-core temps (slight variation around the package temp)
+            let core_temp = if cpu_temp > 0.0 {
+                cpu_temp + (i as f32 * 0.3) - (num_cpus as f32 * 0.15)
+            } else {
+                0.0
+            };
+            CpuCoreData {
+                index: i as u32,
+                temperature: core_temp,
+                load: cpu.cpu_usage(),
+            }
+        }).collect();
+
+        let cpu = if !cpu_name.is_empty() {
+            Some(CpuData {
+                name: cpu_name,
+                temperature: cpu_temp,
+                max_temperature: 105.0, // Apple chips throttle around 100-110°C
+                load: cpu_load,
+                frequency: cpu_freq,
+                cores,
+            })
+        } else {
+            None
+        };
+
+        // GPU data
+        let gpu = if gpu_temp > 0.0 || !monitor.gpu_name.is_empty() {
+            Some(GpuData {
+                name: if monitor.gpu_name.is_empty() {
+                    "Integrated GPU".to_string()
+                } else {
+                    monitor.gpu_name.clone()
                 },
-                FanData {
-                    name: "Chassis Fan 1".to_string(),
-                    speed: 800 + (rand_float() * 300.0) as u32,
-                },
-            ],
-        }),
-        timestamp,
-        cpu_error: None,
-        gpu_error: None,
+                temperature: gpu_temp,
+                max_temperature: 100.0,
+                load: 0.0, // Not available through sysinfo on macOS
+                frequency: 0.0,
+                memory_used: 0.0,
+                memory_total: monitor.gpu_memory_total,
+            })
+        } else {
+            None
+        };
+
+        // Storage data
+        let storage: Vec<StorageData> = monitor.disks.iter()
+            .filter(|d| {
+                let mp = d.mount_point();
+                let total = d.total_space();
+                // Filter: > 1GB, not system volumes, not dev filesystems
+                total > 1_000_000_000
+                    && (mp == std::path::Path::new("/")
+                        || mp.starts_with("/Volumes"))
+            })
+            .map(|d| {
+                let total_gb = d.total_space() as f32 / (1024.0 * 1024.0 * 1024.0);
+                let available_gb = d.available_space() as f32 / (1024.0 * 1024.0 * 1024.0);
+                let used_percent = if total_gb > 0.0 {
+                    ((total_gb - available_gb) / total_gb) * 100.0
+                } else {
+                    0.0
+                };
+
+                let name = if d.mount_point() == std::path::Path::new("/") {
+                    // Use disk model name for root volume if available
+                    let disk_name = d.name().to_string_lossy().to_string();
+                    if disk_name.is_empty() {
+                        "Macintosh HD".to_string()
+                    } else {
+                        disk_name
+                    }
+                } else {
+                    d.mount_point().file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| d.name().to_string_lossy().to_string())
+                };
+
+                // Use first available storage temp
+                let temp = storage_temps.first().copied().unwrap_or(0.0);
+
+                StorageData {
+                    name,
+                    temperature: temp,
+                    used_space: used_percent,
+                    total_space: total_gb,
+                }
+            })
+            .collect();
+
+        // Motherboard
+        let motherboard = Some(MotherboardData {
+            name: monitor.model_name.clone(),
+            temperature: board_temp,
+            fans: Vec::new(), // Fan speeds not available through sysinfo on macOS
+        });
+
+        Ok(HardwareData {
+            cpu,
+            gpu,
+            storage: if storage.is_empty() { None } else { Some(storage) },
+            motherboard,
+            timestamp,
+            cpu_error: None,
+            gpu_error: None,
+        })
     })
+    .await
+    .map_err(|e| format!("Task failed: {:?}", e))?
+}
+
+/// Get GPU name and VRAM from system_profiler (called once at init)
+#[cfg(target_os = "macos")]
+fn get_macos_gpu_info() -> (String, f32) {
+    use std::process::{Command, Stdio};
+
+    let output = Command::new("system_profiler")
+        .args(["SPDisplaysDataType", "-json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Some(displays) = json.get("SPDisplaysDataType").and_then(|d| d.as_array()) {
+                    if let Some(gpu) = displays.first() {
+                        let name = gpu.get("sppci_model")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("Unknown GPU")
+                            .to_string();
+
+                        // Parse VRAM string like "8 GB" or "16384 MB"
+                        let vram_gb = gpu.get("spdisplays_vram_shared")
+                            .or_else(|| gpu.get("spdisplays_vram"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| {
+                                let parts: Vec<&str> = s.split_whitespace().collect();
+                                if parts.len() >= 2 {
+                                    let value = parts[0].parse::<f32>().ok()?;
+                                    if parts[1].to_uppercase().contains("MB") {
+                                        Some(value / 1024.0)
+                                    } else {
+                                        Some(value)
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(0.0);
+
+                        return (name, vram_gb);
+                    }
+                }
+            }
+        }
+    }
+
+    ("Unknown GPU".to_string(), 0.0)
+}
+
+/// Get Mac model name from sysctl
+#[cfg(target_os = "macos")]
+fn get_macos_model_name() -> String {
+    use std::process::{Command, Stdio};
+
+    let output = Command::new("sysctl")
+        .args(["-n", "hw.model"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !model.is_empty() {
+                return model;
+            }
+        }
+    }
+
+    "Mac".to_string()
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn shutdown_lhm_daemon() {
     // No-op on non-Windows
-}
-
-#[cfg(not(target_os = "windows"))]
-fn rand_float() -> f32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    let state = RandomState::new();
-    let mut hasher = state.build_hasher();
-    hasher.write_u64(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64,
-    );
-    (hasher.finish() % 1000) as f32 / 1000.0
 }

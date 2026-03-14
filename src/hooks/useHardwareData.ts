@@ -115,7 +115,7 @@ function generateMockData(): HardwareData {
       {
         name: "Samsung SSD 980 PRO 1TB",
         temperature: 35 + Math.random() * 10,
-        usedSpace: 500,
+        usedSpace: 40 + Math.random() * 30, // percentage (0-100)
         totalSpace: 1000,
       },
     ],

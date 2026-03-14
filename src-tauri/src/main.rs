@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod debug_server;
 mod error_reporting;
 mod hardware;
 mod settings;
@@ -435,6 +436,9 @@ fn main() {
         .setup(move |app| {
             // Setup system tray
             tray::setup_tray(app)?;
+
+            // Start debug HTTP server (http://0.0.0.0:19210)
+            tauri::async_runtime::spawn(debug_server::start_debug_server());
 
             // Position window on startup
             if let Some(window) = app.get_webview_window("main") {
