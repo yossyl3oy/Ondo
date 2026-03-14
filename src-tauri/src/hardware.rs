@@ -273,8 +273,28 @@ fn get_lhm_data() -> Option<LhmResponse> {
     }
 
     // Read all available lines and keep the latest one
+    // Use PeekNamedPipe to check for available data before reading,
+    // because PIPE_NOWAIT may not work reliably on anonymous pipes.
     let mut latest_line = None;
     loop {
+        // Check if there's data available before attempting to read
+        let has_data = {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::System::Pipes::PeekNamedPipe;
+            use windows::Win32::Foundation::HANDLE;
+
+            let handle = HANDLE(daemon.reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
+            let mut bytes_available: u32 = 0;
+            let ok = unsafe {
+                PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None)
+            };
+            ok.is_ok() && bytes_available > 0
+        };
+
+        if !has_data {
+            break;
+        }
+
         let mut line = String::new();
         match daemon.reader.read_line(&mut line) {
             Ok(0) => break, // EOF
@@ -284,7 +304,6 @@ fn get_lhm_data() -> Option<LhmResponse> {
                     latest_line = Some(trimmed.to_string());
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(e) => {
                 crate::log_error!("Hardware", "Failed to read from LHM daemon: {}", e);
                 break;
@@ -337,23 +356,6 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
 
     let stdout = child.stdout.take()
         .ok_or("Failed to capture LHM daemon stdout")?;
-
-    // Set stdout to non-blocking mode
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::System::Pipes::{SetNamedPipeHandleState, NAMED_PIPE_MODE};
-        use windows::Win32::Foundation::HANDLE;
-
-        // PIPE_NOWAIT = 0x00000001
-        const PIPE_NOWAIT: u32 = 0x00000001;
-
-        unsafe {
-            let handle = HANDLE(stdout.as_raw_handle() as *mut std::ffi::c_void);
-            let mut mode = NAMED_PIPE_MODE(PIPE_NOWAIT);
-            let _ = SetNamedPipeHandleState(handle, Some(&mut mode), None, None);
-        }
-    }
 
     let reader = BufReader::new(stdout);
 
