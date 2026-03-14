@@ -11,7 +11,7 @@ pub fn init_sentry() {
     let dsn = option_env!("SENTRY_DSN").unwrap_or("");
 
     if dsn.is_empty() {
-        eprintln!("[Sentry] DSN not configured, error reporting disabled");
+        crate::log_info!("Sentry", "DSN not configured, error reporting disabled");
         return;
     }
 
@@ -33,9 +33,9 @@ pub fn init_sentry() {
     ));
 
     if SENTRY_GUARD.set(guard).is_err() {
-        eprintln!("[Sentry] Already initialized");
+        crate::log_warn!("Sentry", "Already initialized");
     } else {
-        eprintln!("[Sentry] Initialized successfully");
+        crate::log_info!("Sentry", "Initialized successfully");
     }
 }
 

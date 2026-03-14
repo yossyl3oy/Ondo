@@ -245,7 +245,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
                 *daemon_guard = Some(daemon);
             }
             Err(e) => {
-                eprintln!("[Hardware] Failed to start LHM daemon: {}", e);
+                crate::log_error!("Hardware", "Failed to start LHM daemon: {}", e);
                 error_reporting::capture_lhm_error(&format!("Failed to start daemon: {}", e));
                 return None;
             }
@@ -258,7 +258,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
     match daemon.process.try_wait() {
         Ok(Some(status)) => {
             // Process exited, restart it
-            eprintln!("[Hardware] LHM daemon exited with status: {}, restarting...", status);
+            crate::log_warn!("Hardware", "LHM daemon exited with status: {}, restarting...", status);
             *daemon_guard = None;
             return None;
         }
@@ -266,7 +266,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
             // Process still running, read latest line
         }
         Err(e) => {
-            eprintln!("[Hardware] Failed to check LHM daemon status: {}", e);
+            crate::log_error!("Hardware", "Failed to check LHM daemon status: {}", e);
             *daemon_guard = None;
             return None;
         }
@@ -286,7 +286,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(e) => {
-                eprintln!("[Hardware] Failed to read from LHM daemon: {}", e);
+                crate::log_error!("Hardware", "Failed to read from LHM daemon: {}", e);
                 break;
             }
         }
@@ -300,7 +300,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
                 return Some(data);
             }
             Err(e) => {
-                eprintln!("[Hardware] Failed to parse LHM JSON: {}", e);
+                crate::log_warn!("Hardware", "Failed to parse LHM JSON: {}", e);
             }
         }
     }
@@ -357,7 +357,7 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
 
     let reader = BufReader::new(stdout);
 
-    eprintln!("[Hardware] LHM daemon started successfully");
+    crate::log_info!("Hardware", "LHM daemon started successfully");
 
     Ok(LhmDaemon {
         process: child,
@@ -372,7 +372,7 @@ pub fn shutdown_lhm_daemon() {
     if let Ok(mut daemon_guard) = LHM_DAEMON.lock() {
         if let Some(mut daemon) = daemon_guard.take() {
             let _ = daemon.process.kill();
-            eprintln!("[Hardware] LHM daemon stopped");
+            crate::log_info!("Hardware", "LHM daemon stopped");
         }
     }
 }
@@ -988,14 +988,14 @@ fn init_macos_monitor() -> MacOsMonitor {
 
     // Log available temperature sensors for debugging
     for comp in components.iter() {
-        eprintln!("[macOS] Temperature sensor: {} = {}°C", comp.label(), comp.temperature());
+        crate::log_debug!("macOS", "Temperature sensor: {} = {}°C", comp.label(), comp.temperature());
     }
 
     let (gpu_name, gpu_memory_total) = get_macos_gpu_info();
     let model_name = get_macos_model_name();
 
-    eprintln!("[macOS] GPU: {} ({:.1} GB)", gpu_name, gpu_memory_total);
-    eprintln!("[macOS] Model: {}", model_name);
+    crate::log_info!("macOS", "GPU: {} ({:.1} GB)", gpu_name, gpu_memory_total);
+    crate::log_info!("macOS", "Model: {}", model_name);
 
     MacOsMonitor {
         system,

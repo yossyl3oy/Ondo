@@ -1,6 +1,8 @@
 use crate::hardware;
+use crate::log_buffer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use std::collections::HashMap;
 
 const PORT: u16 = 19210;
 
@@ -8,11 +10,11 @@ pub async fn start_debug_server() {
     let addr = format!("0.0.0.0:{}", PORT);
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => {
-            eprintln!("[DebugServer] Listening on http://{}", addr);
+            crate::log_info!("DebugServer", "Listening on http://{}", addr);
             l
         }
         Err(e) => {
-            eprintln!("[DebugServer] Failed to bind {}: {}", addr, e);
+            crate::log_error!("DebugServer", "Failed to bind {}: {}", addr, e);
             return;
         }
     };
@@ -21,7 +23,7 @@ pub async fn start_debug_server() {
         let (mut stream, peer) = match listener.accept().await {
             Ok(conn) => conn,
             Err(e) => {
-                eprintln!("[DebugServer] Accept error: {}", e);
+                crate::log_error!("DebugServer", "Accept error: {}", e);
                 continue;
             }
         };
@@ -34,14 +36,22 @@ pub async fn start_debug_server() {
             };
 
             let request = String::from_utf8_lossy(&buf[..n]);
-            let path = parse_request_path(&request);
+            let (method, path, query) = parse_request(&request);
 
-            eprintln!("[DebugServer] {} -> {}", peer, path);
+            // Don't log /logs requests to avoid noise
+            if !path.starts_with("/logs") && path != "/status" {
+                crate::log_debug!("DebugServer", "{} {} {}", peer, method, path);
+            }
 
-            let response = match path.as_str() {
-                "/api/hardware" => handle_hardware().await,
-                "/api/sensors" => handle_sensors().await,
-                "/" => handle_dashboard(),
+            let response = match (method.as_str(), path.as_str()) {
+                (_, "/api/hardware") => handle_hardware().await,
+                (_, "/api/sensors") => handle_sensors().await,
+                (_, "/status") => handle_status(&query),
+                (_, "/logs") => handle_logs(&query),
+                (_, "/logs/tail") => handle_logs_tail(&query),
+                (_, "/logs/search") => handle_logs_search(&query),
+                ("POST", "/clear") => handle_clear(),
+                (_, "/") => handle_dashboard(),
                 _ => http_response(404, "text/plain", "Not Found"),
             };
 
@@ -50,23 +60,34 @@ pub async fn start_debug_server() {
     }
 }
 
-fn parse_request_path(request: &str) -> String {
-    // Parse "GET /path HTTP/1.1"
-    request
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/")
-        .split('?')
-        .next()
-        .unwrap_or("/")
-        .to_string()
+fn parse_request(request: &str) -> (String, String, HashMap<String, String>) {
+    let first_line = request.lines().next().unwrap_or("");
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
+
+    let method = parts.first().unwrap_or(&"GET").to_string();
+    let full_path = parts.get(1).unwrap_or(&"/");
+
+    let (path, query_str) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (*full_path, ""),
+    };
+
+    let mut query = HashMap::new();
+    for pair in query_str.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            query.insert(k.to_string(), v.to_string());
+        }
+    }
+
+    (method, path.to_string(), query)
 }
 
 fn http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
+        400 => "Bad Request",
         404 => "Not Found",
+        405 => "Method Not Allowed",
         500 => "Internal Server Error",
         _ => "Unknown",
     };
@@ -75,6 +96,7 @@ fn http_response(status: u16, content_type: &str, body: &str) -> String {
          Content-Type: {}; charset=utf-8\r\n\
          Content-Length: {}\r\n\
          Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
          Connection: close\r\n\
          \r\n\
          {}",
@@ -85,6 +107,126 @@ fn http_response(status: u16, content_type: &str, body: &str) -> String {
         body
     )
 }
+
+fn wants_json(query: &HashMap<String, String>) -> bool {
+    query.get("format").map(|f| f == "json").unwrap_or(false)
+}
+
+// --- Log endpoints ---
+
+fn handle_status(query: &HashMap<String, String>) -> String {
+    let log_count = log_buffer::count();
+    let pid = std::process::id();
+    let version = env!("CARGO_PKG_VERSION");
+
+    if wants_json(query) {
+        let json = format!(
+            r#"{{"status":"running","pid":{},"version":"{}","logCount":{}}}"#,
+            pid, version, log_count
+        );
+        http_response(200, "application/json", &json)
+    } else {
+        let text = format!(
+            "Status: running\nPID: {}\nVersion: {}\nLog lines: {}",
+            pid, version, log_count
+        );
+        http_response(200, "text/plain", &text)
+    }
+}
+
+fn handle_logs(query: &HashMap<String, String>) -> String {
+    let logs = if let Some(since) = query.get("since") {
+        if let Ok(ms) = since.parse::<u64>() {
+            log_buffer::get_since(ms)
+        } else {
+            log_buffer::get_all()
+        }
+    } else {
+        log_buffer::get_all()
+    };
+
+    let logs = if let Some(limit) = query.get("limit") {
+        if let Ok(n) = limit.parse::<usize>() {
+            let start = logs.len().saturating_sub(n);
+            logs[start..].to_vec()
+        } else {
+            logs
+        }
+    } else {
+        logs
+    };
+
+    let logs = if let Some(level) = query.get("level") {
+        logs.into_iter().filter(|e| e.level == level.as_str()).collect()
+    } else {
+        logs
+    };
+
+    let logs = if let Some(tag) = query.get("tag") {
+        logs.into_iter().filter(|e| e.tag == tag.as_str()).collect()
+    } else {
+        logs
+    };
+
+    format_log_response(&logs, query)
+}
+
+fn handle_logs_tail(query: &HashMap<String, String>) -> String {
+    let n = query
+        .get("n")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+
+    let logs = log_buffer::get_tail(n);
+    format_log_response(&logs, query)
+}
+
+fn handle_logs_search(query: &HashMap<String, String>) -> String {
+    let pattern = match query.get("q") {
+        Some(q) if !q.is_empty() => q,
+        _ => return http_response(400, "text/plain", "Missing ?q= parameter"),
+    };
+
+    let logs = log_buffer::search(pattern);
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(200);
+    let start = logs.len().saturating_sub(limit);
+    let logs = &logs[start..];
+
+    format_log_response(logs, query)
+}
+
+fn handle_clear() -> String {
+    log_buffer::clear();
+    http_response(200, "text/plain", "Log buffer cleared")
+}
+
+fn format_log_response(logs: &[log_buffer::LogEntry], query: &HashMap<String, String>) -> String {
+    if wants_json(query) {
+        let json = serde_json::to_string_pretty(logs).unwrap_or_else(|_| "[]".to_string());
+        let body = format!(
+            r#"{{"logs":{},"total":{},"returned":{}}}"#,
+            json,
+            log_buffer::count(),
+            logs.len()
+        );
+        http_response(200, "application/json", &body)
+    } else {
+        if logs.is_empty() {
+            return http_response(200, "text/plain", "(no logs)");
+        }
+        let text: String = logs
+            .iter()
+            .map(|e| format!("[{}] [{}] [{}] {}", e.timestamp, e.level, e.tag, e.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        http_response(200, "text/plain", &text)
+    }
+}
+
+// --- Original hardware endpoints ---
 
 async fn handle_hardware() -> String {
     match hardware::get_hardware_info().await {
@@ -208,19 +350,28 @@ fn handle_dashboard() -> String {
   .tab.active { background: #0a3d62; color: #0ff; }
   .status { font-size: 11px; color: #666; }
   a { color: #0af; }
+  .log-entry { font-size: 12px; line-height: 1.4; }
+  .log-entry .ts { color: #666; }
+  .log-entry .tag { color: #0af; }
+  .log-entry .lvl-error { color: #f44; }
+  .log-entry .lvl-warn { color: #ff0; }
+  .log-entry .lvl-info { color: #0f0; }
+  .log-entry .lvl-debug { color: #888; }
 </style>
 </head>
 <body>
 <h1>&#x25C8; ONDO DEBUG DASHBOARD</h1>
-<div class="status">Auto-refresh: 2s | <a href="/api/hardware">JSON</a> | <a href="/api/sensors">Raw Sensors</a></div>
+<div class="status">Auto-refresh: 2s | <a href="/api/hardware">JSON</a> | <a href="/api/sensors">Raw Sensors</a> | <a href="/logs?format=json">Logs JSON</a> | <a href="/status">Status</a></div>
 
 <div class="tabs">
   <div class="tab active" onclick="showTab('hardware')">Hardware Data</div>
   <div class="tab" onclick="showTab('sensors')">Raw Sensors</div>
+  <div class="tab" onclick="showTab('logs')">App Logs</div>
 </div>
 
 <div id="hardware-tab"></div>
 <div id="sensors-tab" style="display:none"><pre id="sensors-pre">Loading...</pre></div>
+<div id="logs-tab" style="display:none"><pre id="logs-pre">Loading...</pre></div>
 
 <script>
 function tempClass(t, max) {
@@ -288,8 +439,10 @@ function renderHardware(d) {
 function showTab(name) {
   document.getElementById('hardware-tab').style.display = name === 'hardware' ? '' : 'none';
   document.getElementById('sensors-tab').style.display = name === 'sensors' ? '' : 'none';
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0 && name === 'hardware') || (i === 1 && name === 'sensors')));
+  document.getElementById('logs-tab').style.display = name === 'logs' ? '' : 'none';
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0 && name === 'hardware') || (i === 1 && name === 'sensors') || (i === 2 && name === 'logs')));
   if (name === 'sensors') fetchSensors();
+  if (name === 'logs') fetchLogs();
 }
 
 async function fetchHardware() {
@@ -311,8 +464,28 @@ async function fetchSensors() {
   }
 }
 
+async function fetchLogs() {
+  try {
+    const r = await fetch('/logs/tail?n=200&format=json');
+    const d = await r.json();
+    const el = document.getElementById('logs-pre');
+    el.innerHTML = d.logs.map(e =>
+      '<div class="log-entry"><span class="ts">' + e.timestamp + '</span> ' +
+      '<span class="lvl-' + e.level + '">[' + e.level + ']</span> ' +
+      '<span class="tag">[' + e.tag + ']</span> ' +
+      e.message + '</div>'
+    ).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    document.getElementById('logs-pre').textContent = 'Fetch error: ' + e;
+  }
+}
+
 fetchHardware();
 setInterval(fetchHardware, 2000);
+setInterval(() => {
+  if (document.getElementById('logs-tab').style.display !== 'none') fetchLogs();
+}, 2000);
 </script>
 </body>
 </html>"#;

@@ -4,6 +4,7 @@
 mod debug_server;
 mod error_reporting;
 mod hardware;
+mod log_buffer;
 mod settings;
 mod tray;
 
