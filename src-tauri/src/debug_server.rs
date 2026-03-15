@@ -46,6 +46,7 @@ pub async fn start_debug_server() {
             let response = match (method.as_str(), path.as_str()) {
                 (_, "/api/hardware") => handle_hardware().await,
                 (_, "/api/sensors") => handle_sensors().await,
+                (_, "/help") => handle_help(&query),
                 (_, "/status") => handle_status(&query),
                 (_, "/logs") => handle_logs(&query),
                 (_, "/logs/tail") => handle_logs_tail(&query),
@@ -110,6 +111,50 @@ fn http_response(status: u16, content_type: &str, body: &str) -> String {
 
 fn wants_json(query: &HashMap<String, String>) -> bool {
     query.get("format").map(|f| f == "json").unwrap_or(false)
+}
+
+// --- Help endpoint ---
+
+fn handle_help(query: &HashMap<String, String>) -> String {
+    if wants_json(query) {
+        let json = r#"{
+  "endpoints": [
+    {"method": "GET", "path": "/", "description": "Dashboard (HTML)"},
+    {"method": "GET", "path": "/help", "description": "This help. Add ?format=json for JSON"},
+    {"method": "GET", "path": "/status", "description": "Process state (PID, version, log count)"},
+    {"method": "GET", "path": "/api/hardware", "description": "Hardware sensor data (JSON)"},
+    {"method": "GET", "path": "/api/sensors", "description": "Raw sensor list (text)"},
+    {"method": "GET", "path": "/logs", "description": "All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware"},
+    {"method": "GET", "path": "/logs/tail", "description": "Latest N lines. ?n=100 (default)"},
+    {"method": "GET", "path": "/logs/search", "description": "Regex search. ?q=<pattern>&limit=200"},
+    {"method": "POST", "path": "/clear", "description": "Clear log buffer"}
+  ],
+  "notes": [
+    "Add ?format=json to any log endpoint for JSON output",
+    "Default log format is plain text"
+  ]
+}"#;
+        http_response(200, "application/json", json)
+    } else {
+        let text = "\
+Ondo Debug Server - API Reference
+==================================
+
+  GET  /                Dashboard (HTML)
+  GET  /help            This help. Add ?format=json for JSON
+  GET  /status          Process state (PID, version, log count)
+  GET  /api/hardware    Hardware sensor data (JSON)
+  GET  /api/sensors     Raw sensor list (text)
+  GET  /logs            All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware
+  GET  /logs/tail       Latest N lines. ?n=100 (default)
+  GET  /logs/search     Regex search. ?q=<pattern>&limit=200
+  POST /clear           Clear log buffer
+
+Notes:
+  - Add ?format=json to any log endpoint for JSON output
+  - Default log format is plain text";
+        http_response(200, "text/plain", text)
+    }
 }
 
 // --- Log endpoints ---
