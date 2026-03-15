@@ -7,7 +7,7 @@ fn main() {
         let mut windows = tauri_build::WindowsAttributes::new();
         windows = windows.app_manifest(include_str!("app.manifest"));
         let attrs = tauri_build::Attributes::new().windows_attributes(windows);
-        tauri_build::Builder::new().try_build(attrs).expect("failed to build tauri app");
+        tauri_build::try_build(attrs).expect("failed to build tauri app");
     }
 
     #[cfg(not(target_os = "windows"))]
