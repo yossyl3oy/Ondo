@@ -232,9 +232,29 @@ pub fn get_pawnio_detailed_status() -> PawnIOStatus {
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    // Check if PawnIO driver file exists in System32\drivers
-    let driver_path = std::path::Path::new(r"C:\Windows\System32\drivers\PawnIO.sys");
-    let driver_file_exists = driver_path.exists();
+    // Get driver binary path from service config (sc qc)
+    let driver_file_exists = {
+        let qc_output = Command::new("sc")
+            .args(["qc", "PawnIO"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        if let Ok(qc) = qc_output {
+            let qc_stdout = String::from_utf8_lossy(&qc.stdout);
+            // Extract BINARY_PATH_NAME from sc qc output and check if file exists
+            if let Some(line) = qc_stdout.lines().find(|l| l.contains("BINARY_PATH_NAME")) {
+                let path_str = line.split(':').skip(1).collect::<Vec<_>>().join(":").trim().to_string();
+                // Remove leading \??\ prefix if present
+                let clean_path = path_str.trim_start_matches(r"\??\");
+                let exists = std::path::Path::new(clean_path).exists();
+                crate::log_debug!("PawnIO", "Driver binary path: {} (exists={})", clean_path, exists);
+                exists
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
 
     // Check if PawnIO service/driver is registered and its state
     let output = Command::new("sc")
