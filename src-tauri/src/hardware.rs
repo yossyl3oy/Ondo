@@ -110,19 +110,49 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
         if let Some(lhm) = lhm_data {
             // Use LHM data, supplement with WMI where needed
-            let cpu = lhm.cpu.map(|c| CpuData {
-                name: c.name,
-                temperature: c.temperature,
-                max_temperature: c.max_temperature,
-                load: c.load,
-                frequency: c.frequency,
-                cores: c.cores.map(|cores| {
-                    cores.into_iter().map(|core| CpuCoreData {
-                        index: core.index,
-                        temperature: core.temperature,
-                        load: core.load,
-                    }).collect()
-                }).unwrap_or_default(),
+            let cpu = lhm.cpu.map(|c| {
+                // If LHM doesn't have CPU temperature, try WMI fallback
+                let temperature = if c.temperature > 0.0 {
+                    c.temperature
+                } else {
+                    wmi_data.as_ref()
+                        .and_then(|w| w.cpu.as_ref())
+                        .map(|cpu| cpu.temperature)
+                        .unwrap_or(0.0)
+                };
+
+                // If LHM doesn't have CPU frequency, try WMI fallback
+                let frequency = if c.frequency > 0.0 {
+                    c.frequency
+                } else {
+                    wmi_data.as_ref()
+                        .and_then(|w| w.cpu.as_ref())
+                        .map(|cpu| cpu.frequency)
+                        .unwrap_or(0.0)
+                };
+
+                CpuData {
+                    name: c.name,
+                    temperature,
+                    max_temperature: c.max_temperature,
+                    load: c.load,
+                    frequency,
+                    cores: c.cores.map(|cores| {
+                        cores.into_iter().map(|core| {
+                            // If per-core temperature is 0, use the fallback temperature
+                            let core_temp = if core.temperature > 0.0 {
+                                core.temperature
+                            } else {
+                                temperature
+                            };
+                            CpuCoreData {
+                                index: core.index,
+                                temperature: core_temp,
+                                load: core.load,
+                            }
+                        }).collect()
+                    }).unwrap_or_default(),
+                }
             });
 
             let gpu = lhm.gpu.map(|g| GpuData {
