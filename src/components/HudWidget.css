@@ -140,12 +140,40 @@
 
 /* Sections */
 .hud-section {
+  -webkit-app-region: no-drag;
   background: var(--hud-surface);
   border: 1px solid var(--hud-border);
   border-radius: 4px;
   padding: 8px;
   margin-bottom: 8px;
   animation: sectionSlideIn 0.3s ease;
+  cursor: grab;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  transition: scale 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease;
+}
+
+.hud-section:active {
+  cursor: grabbing;
+}
+
+.hud-section.dragging {
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 12px var(--hud-glow);
+  border-color: var(--hud-accent);
+  opacity: 0.95;
+}
+
+.hud-section.shrink {
+  scale: 0.95;
+  opacity: 0.6;
+}
+
+.storage-drive-separator {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--hud-border);
 }
 
 @keyframes sectionSlideIn {

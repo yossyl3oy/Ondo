@@ -70,6 +70,7 @@ export interface AppSettings {
   updateInterval: number;
   theme: "auto" | "dark" | "light";
   compactMode: boolean;
+  sectionOrder: SectionType[];
   windowState?: WindowState;
 }
 
@@ -83,7 +84,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,
+  sectionOrder: ["cpu", "gpu", "storage", "motherboard"],
 };
+
+export type SectionType = "cpu" | "gpu" | "storage" | "motherboard";
 
 export interface PawnIOStatus {
   installed: boolean;

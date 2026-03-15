@@ -8,7 +8,7 @@ import { UpdateNotification } from "./components/UpdateNotification";
 import { useHardwareData } from "./hooks/useHardwareData";
 import { useSettings } from "./hooks/useSettings";
 import { useUpdater } from "./hooks/useUpdater";
-import type { WindowState } from "./types";
+import type { WindowState, SectionType } from "./types";
 import "./styles/App.css";
 
 function App() {
@@ -112,6 +112,10 @@ function App() {
     setShowSettings(!showSettings);
   };
 
+  const handleSectionOrderChange = useCallback((order: SectionType[]) => {
+    updateSettings({ sectionOrder: order });
+  }, [updateSettings]);
+
   if (isBooting) {
     return <BootSequence />;
   }
@@ -127,6 +131,8 @@ function App() {
         isLoading={isLoading}
         error={error}
         onSettingsClick={handleSettingsToggle}
+        sectionOrder={settings.sectionOrder}
+        onSectionOrderChange={handleSectionOrderChange}
       />
       {showSettings && (
         <SettingsPanel
