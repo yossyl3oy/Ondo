@@ -125,6 +125,41 @@ pub fn count() -> usize {
         .unwrap_or(0)
 }
 
+/// Bridge the standard `log` crate into our ring buffer so that Tauri's
+/// internal logs (and any other `log::info!()` etc.) are also captured.
+struct BufferLogger;
+
+impl log::Log for BufferLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record) {
+        let level = match record.level() {
+            log::Level::Error => "error",
+            log::Level::Warn => "warn",
+            log::Level::Info => "info",
+            log::Level::Debug => "debug",
+            log::Level::Trace => "trace",
+        };
+        let tag = record
+            .module_path()
+            .unwrap_or(record.target());
+        push_log(level, tag, &format!("{}", record.args()));
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: BufferLogger = BufferLogger;
+
+/// Call once at startup (before `tauri::Builder`) to capture all `log` crate output.
+pub fn init_logger() {
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(log::LevelFilter::Debug))
+        .ok();
+}
+
 /// Convenience macros for logging with tag and level
 #[macro_export]
 macro_rules! app_log {

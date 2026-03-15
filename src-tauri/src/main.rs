@@ -415,6 +415,9 @@ async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<
 }
 
 fn main() {
+    // Capture all `log` crate output (including Tauri internals) into the debug server buffer
+    log_buffer::init_logger();
+
     // Initialize Sentry for error reporting
     error_reporting::init_sentry();
 

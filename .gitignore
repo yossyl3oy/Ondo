@@ -67,3 +67,4 @@ coverage/
 
 # Claude settings (user-specific)
 .claude/
+CLAUDE.md
