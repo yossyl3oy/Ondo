@@ -424,6 +424,7 @@ struct Win32DiskDrive {
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct Win32LogicalDisk {
     device_i_d: Option<String>,
     size: Option<u64>,
