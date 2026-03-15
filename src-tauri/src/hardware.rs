@@ -355,14 +355,64 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
     let stdout = child.stdout.take()
         .ok_or("Failed to capture LHM daemon stdout")?;
 
-    let reader = BufReader::new(stdout);
+    let mut reader = BufReader::new(stdout);
 
-    crate::log_info!("Hardware", "LHM daemon started successfully");
+    crate::log_info!("Hardware", "LHM daemon started, waiting for first data...");
+
+    // Wait for the first line of data from the daemon (up to 10 seconds)
+    let mut initial_data = None;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        let mut line = String::new();
+        // Use a short sleep + peek approach to avoid blocking forever
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::System::Pipes::PeekNamedPipe;
+            use windows::Win32::Foundation::HANDLE;
+
+            let handle = HANDLE(reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
+            let mut bytes_available: u32 = 0;
+            let ok = unsafe {
+                PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None)
+            };
+            if !ok.is_ok() || bytes_available == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+        }
+
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF - daemon exited
+            Ok(_) => {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    match serde_json::from_str::<LhmResponse>(trimmed) {
+                        Ok(data) => {
+                            crate::log_info!("Hardware", "LHM daemon ready - first data received");
+                            initial_data = Some(data);
+                            break;
+                        }
+                        Err(e) => {
+                            crate::log_warn!("Hardware", "LHM initial data parse error: {}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                crate::log_error!("Hardware", "Failed to read initial LHM data: {}", e);
+                break;
+            }
+        }
+    }
+
+    if initial_data.is_none() {
+        crate::log_warn!("Hardware", "LHM daemon started but no initial data received within timeout");
+    }
 
     Ok(LhmDaemon {
         process: child,
         reader,
-        latest_data: None,
+        latest_data: initial_data,
     })
 }
 
