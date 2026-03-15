@@ -105,28 +105,20 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         // Try to get data from LHM daemon
         let lhm_data = get_lhm_data();
 
-        // Get WMI data for fallback/supplement
-        let wmi_data = get_hardware_from_wmi(timestamp).ok();
+        // Get sysinfo data for fallback/supplement (no WMI)
+        let sysinfo_data = get_fallback_from_sysinfo(timestamp);
 
         if let Some(lhm) = lhm_data {
-            // Use LHM data, supplement with WMI where needed
+            // Use LHM data, supplement with sysinfo where needed
             let cpu = lhm.cpu.map(|c| {
-                // If LHM doesn't have CPU temperature, try WMI fallback
-                let temperature = if c.temperature > 0.0 {
-                    c.temperature
-                } else {
-                    wmi_data.as_ref()
-                        .and_then(|w| w.cpu.as_ref())
-                        .map(|cpu| cpu.temperature)
-                        .unwrap_or(0.0)
-                };
+                // sysinfo cannot provide CPU temperature on Windows, so use LHM value (0 if unavailable)
+                let temperature = c.temperature;
 
-                // If LHM doesn't have CPU frequency, try WMI fallback
+                // If LHM doesn't have CPU frequency, try sysinfo fallback
                 let frequency = if c.frequency > 0.0 {
                     c.frequency
                 } else {
-                    wmi_data.as_ref()
-                        .and_then(|w| w.cpu.as_ref())
+                    sysinfo_data.cpu.as_ref()
                         .map(|cpu| cpu.frequency)
                         .unwrap_or(0.0)
                 };
@@ -139,7 +131,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                     frequency,
                     cores: c.cores.map(|cores| {
                         cores.into_iter().map(|core| {
-                            // If per-core temperature is 0, use the fallback temperature
+                            // If per-core temperature is 0, use the package temperature
                             let core_temp = if core.temperature > 0.0 {
                                 core.temperature
                             } else {
@@ -165,76 +157,53 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 memory_total: g.memory_total,
             });
 
-            // For storage: use LHM data, but supplement with WMI if LHM data is incomplete
+            // For storage: use LHM data, supplement with sysinfo if LHM data is incomplete
             let storage = lhm.storage.map(|storages| {
-                let wmi_storage = wmi_data.as_ref().and_then(|w| w.storage.as_ref());
+                let sysinfo_storage = sysinfo_data.storage.as_ref();
                 storages.into_iter().map(|s| {
-                    // Find matching WMI storage for supplementing missing data
-                    let wmi_match = wmi_storage.and_then(|ws| {
-                        ws.iter().find(|w| {
-                            w.name.contains(&s.name) || s.name.contains(&w.name) ||
-                            // Also match by partial name (e.g., "Samsung" matches "Samsung SSD 980")
-                            w.name.split_whitespace().next().map(|first| s.name.contains(first)).unwrap_or(false)
+                    // Find matching sysinfo storage for supplementing missing data
+                    let sysinfo_match = sysinfo_storage.and_then(|ss| {
+                        ss.iter().find(|si| {
+                            si.name.contains(&s.name) || s.name.contains(&si.name) ||
+                            si.name.split_whitespace().next().map(|first| s.name.contains(first)).unwrap_or(false)
                         })
                     });
 
-                    // If LHM doesn't have total_space, try to find it from WMI
                     let total_space = if s.total_space > 0.0 {
                         s.total_space
                     } else {
-                        wmi_match.map(|w| w.total_space).unwrap_or(0.0)
+                        sysinfo_match.map(|si| si.total_space).unwrap_or(0.0)
                     };
 
-                    // If LHM doesn't have used_percent, try to find it from WMI
                     let used_space = if s.used_percent > 0.0 {
                         s.used_percent
                     } else {
-                        wmi_match.map(|w| w.used_space).unwrap_or(0.0)
-                    };
-
-                    // If LHM doesn't have temperature, try to find it from WMI (PowerShell fallback)
-                    let temperature = if s.temperature > 0.0 {
-                        s.temperature
-                    } else {
-                        wmi_match.map(|w| w.temperature).unwrap_or(0.0)
+                        sysinfo_match.map(|si| si.used_space).unwrap_or(0.0)
                     };
 
                     StorageData {
                         name: s.name,
-                        temperature,
+                        temperature: s.temperature,
                         used_space,
                         total_space,
                     }
                 }).collect()
             });
 
-            // For motherboard: use LHM data, supplement with WMI for name if needed
+            // For motherboard: use LHM data only (sysinfo cannot provide this)
             let motherboard = lhm.motherboard.map(|m| {
-                let wmi_mb = wmi_data.as_ref().and_then(|w| w.motherboard.as_ref());
-                let name = if m.name.is_empty() || m.name == "Unknown" {
-                    wmi_mb.map(|w| w.name.clone()).unwrap_or(m.name)
-                } else {
-                    m.name
-                };
-                // Use WMI fans if LHM doesn't have any
                 let fans = m.fans.map(|fans| {
-                    if fans.is_empty() {
-                        wmi_mb.map(|w| w.fans.clone()).unwrap_or_default()
-                    } else {
-                        fans.into_iter().map(|f| FanData {
-                            name: f.name,
-                            speed: f.speed,
-                        }).collect()
-                    }
-                }).unwrap_or_else(|| {
-                    wmi_mb.map(|w| w.fans.clone()).unwrap_or_default()
-                });
+                    fans.into_iter().map(|f| FanData {
+                        name: f.name,
+                        speed: f.speed,
+                    }).collect()
+                }).unwrap_or_default();
                 MotherboardData {
-                    name,
+                    name: m.name,
                     temperature: m.temperature,
                     fans,
                 }
-            }).or_else(|| wmi_data.as_ref().and_then(|w| w.motherboard.clone()));
+            });
 
             Ok(HardwareData {
                 cpu,
@@ -245,18 +214,17 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 cpu_error: None,
                 gpu_error: None,
             })
-        } else if let Some(wmi) = wmi_data {
-            // Full fallback to WMI
-            Ok(wmi)
         } else {
+            // Full fallback to sysinfo (LHM not available)
+            crate::log_warn!("Hardware", "LHM unavailable, using sysinfo fallback");
             Ok(HardwareData {
-                cpu: None,
-                gpu: None,
-                storage: None,
+                cpu: sysinfo_data.cpu,
+                gpu: sysinfo_data.gpu,
+                storage: sysinfo_data.storage,
                 motherboard: None,
                 timestamp,
-                cpu_error: Some("Failed to get hardware data".to_string()),
-                gpu_error: Some("Failed to get hardware data".to_string()),
+                cpu_error: None,
+                gpu_error: None,
             })
         }
     })
@@ -409,269 +377,135 @@ pub fn shutdown_lhm_daemon() {
     }
 }
 
-// WMI fallback implementation
-#[cfg(target_os = "windows")]
-use wmi::{COMLibrary, WMIConnection, Variant};
+// sysinfo for hardware data (replaces WMI on Windows to avoid application control policy blocks)
+use sysinfo::{System, Disks};
 
+/// Fallback data source using sysinfo crate (no WMI dependency)
 #[cfg(target_os = "windows")]
-use std::collections::HashMap;
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32Processor {
-    name: Option<String>,
-    load_percentage: Option<u16>,
-    number_of_cores: Option<u32>,
-    number_of_logical_processors: Option<u32>,
-    current_clock_speed: Option<u32>,
+struct SysinfoFallback {
+    cpu: Option<CpuData>,
+    gpu: Option<GpuData>,
+    storage: Option<Vec<StorageData>>,
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32VideoController {
-    name: Option<String>,
-    adapter_r_a_m: Option<u64>,
-}
+fn get_fallback_from_sysinfo(timestamp: u64) -> SysinfoFallback {
+    let mut sys = System::new();
+    sys.refresh_cpu_all();
+    // Brief pause then refresh again for accurate CPU usage readings
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    sys.refresh_cpu_all();
 
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32PerfFormattedDataProcessorInformation {
-    name: Option<String>,
-    percent_processor_time: Option<u64>,
-}
+    let cpus = sys.cpus();
 
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32DiskDrive {
-    model: Option<String>,
-    size: Option<u64>,
-}
+    let cpu = if !cpus.is_empty() {
+        let name = cpus[0].brand().to_string();
+        let total_load: f32 = cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32;
+        let avg_freq = cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
 
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
-struct Win32LogicalDisk {
-    device_i_d: Option<String>,
-    size: Option<u64>,
-    free_space: Option<u64>,
-    volume_name: Option<String>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32BaseBoard {
-    manufacturer: Option<String>,
-    product: Option<String>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32Fan {
-    name: Option<String>,
-    #[serde(rename = "DesiredSpeed")]
-    desired_speed: Option<u64>,
-}
-
-#[cfg(target_os = "windows")]
-fn get_hardware_from_wmi(timestamp: u64) -> Result<HardwareData, String> {
-    let com = match COMLibrary::new() {
-        Ok(c) => c,
-        Err(e) => {
-            let error_msg = format!("COM init failed: {:?}", e);
-            error_reporting::capture_wmi_error(&error_msg, "com_init");
-            return Ok(HardwareData {
-                cpu: None,
-                gpu: None,
-                storage: None,
-                motherboard: None,
-                timestamp,
-                cpu_error: Some(error_msg.clone()),
-                gpu_error: Some(error_msg),
-            });
-        }
-    };
-
-    let wmi = match WMIConnection::new(com) {
-        Ok(w) => w,
-        Err(e) => {
-            let error_msg = format!("WMI connection failed: {:?}", e);
-            error_reporting::capture_wmi_error(&error_msg, "wmi_connection");
-            return Ok(HardwareData {
-                cpu: None,
-                gpu: None,
-                storage: None,
-                motherboard: None,
-                timestamp,
-                cpu_error: Some(error_msg.clone()),
-                gpu_error: Some(error_msg),
-            });
-        }
-    };
-
-    let (cpu, cpu_error) = match get_cpu_info(&wmi) {
-        Ok(data) => (Some(data), None),
-        Err(e) => {
-            error_reporting::capture_wmi_error(&e, "cpu_info");
-            (None, Some(e))
-        }
-    };
-
-    let (gpu, gpu_error) = match get_gpu_info(&wmi) {
-        Ok(data) => (Some(data), None),
-        Err(e) => {
-            error_reporting::capture_wmi_error(&e, "gpu_info");
-            (None, Some(e))
-        }
-    };
-
-    let storage = get_storage_info(&wmi).ok();
-    let motherboard = get_motherboard_info(&wmi).ok();
-
-    Ok(HardwareData {
-        cpu,
-        gpu,
-        storage,
-        motherboard,
-        timestamp,
-        cpu_error,
-        gpu_error,
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn get_cpu_info(wmi: &WMIConnection) -> Result<CpuData, String> {
-    let processors: Vec<Win32Processor> = wmi
-        .raw_query("SELECT Name, LoadPercentage, NumberOfCores, NumberOfLogicalProcessors, CurrentClockSpeed FROM Win32_Processor")
-        .map_err(|e| format!("CPU query failed: {:?}", e))?;
-
-    let processor = processors.first().ok_or("No CPU found")?;
-    let name = processor.name.clone().unwrap_or_else(|| "Unknown CPU".to_string());
-    let num_cores = processor.number_of_cores.unwrap_or(4);
-    let num_logical = processor.number_of_logical_processors.unwrap_or(num_cores);
-    let frequency = processor.current_clock_speed.map(|mhz| mhz as f32 / 1000.0).unwrap_or(0.0);
-    let load = get_cpu_load(wmi).unwrap_or(processor.load_percentage.unwrap_or(0) as f32);
-    let temperature = get_cpu_temperature(wmi).unwrap_or(0.0);
-    let core_loads = get_core_loads(wmi, num_logical);
-
-    let cores: Vec<CpuCoreData> = (0..num_logical)
-        .map(|i| {
-            let core_load = core_loads.get(&i).copied().unwrap_or(load);
+        let cores: Vec<CpuCoreData> = cpus.iter().enumerate().map(|(i, c)| {
             CpuCoreData {
-                index: i,
-                temperature: if temperature > 0.0 {
-                    temperature + (i as f32 * 0.5) - ((num_logical as f32) * 0.25)
-                } else {
-                    0.0
-                },
-                load: core_load,
+                index: i as u32,
+                temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
+                load: c.cpu_usage(),
+            }
+        }).collect();
+
+        Some(CpuData {
+            name,
+            temperature: 0.0, // Not available via sysinfo on Windows
+            max_temperature: 100.0,
+            load: total_load,
+            frequency: avg_freq,
+            cores,
+        })
+    } else {
+        None
+    };
+
+    // GPU: use nvidia-smi / rocm-smi (no WMI)
+    let gpu = get_gpu_info_without_wmi();
+
+    // Storage: use sysinfo Disks
+    let disks = Disks::new_with_refreshed_list();
+    let storage_data: Vec<StorageData> = disks.iter()
+        .filter(|d| d.total_space() > 1_073_741_824) // > 1GB
+        .map(|d| {
+            let total_gb = d.total_space() as f32 / 1_073_741_824.0;
+            let used_gb = (d.total_space() - d.available_space()) as f32 / 1_073_741_824.0;
+            let used_percent = if total_gb > 0.0 { (used_gb / total_gb) * 100.0 } else { 0.0 };
+            let name = d.name().to_string_lossy().to_string();
+            let name = if name.is_empty() {
+                d.mount_point().to_string_lossy().to_string()
+            } else {
+                name
+            };
+            StorageData {
+                name,
+                temperature: 0.0,
+                used_space: used_percent,
+                total_space: total_gb,
             }
         })
         .collect();
 
-    Ok(CpuData {
+    let storage = if storage_data.is_empty() { None } else { Some(storage_data) };
+
+    SysinfoFallback { cpu, gpu, storage }
+}
+
+/// Get GPU info without WMI - uses nvidia-smi / rocm-smi CLI tools
+#[cfg(target_os = "windows")]
+fn get_gpu_info_without_wmi() -> Option<GpuData> {
+    // Try NVIDIA first, then AMD
+    let (temperature, load, memory_used, frequency) = get_nvidia_smi_stats()
+        .or_else(get_amd_gpu_stats)?;
+
+    // Get GPU name from nvidia-smi if available
+    let name = get_nvidia_gpu_name().unwrap_or_else(|| "Unknown GPU".to_string());
+
+    Some(GpuData {
         name,
         temperature,
-        max_temperature: 100.0,
+        max_temperature: 95.0,
         load,
         frequency,
-        cores,
+        memory_used,
+        memory_total: get_nvidia_memory_total().unwrap_or(8.0),
     })
 }
 
+/// Get NVIDIA GPU name via nvidia-smi
 #[cfg(target_os = "windows")]
-fn get_cpu_load(wmi: &WMIConnection) -> Result<f32, String> {
-    let results: Vec<Win32PerfFormattedDataProcessorInformation> = wmi
-        .raw_query("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name='_Total'")
-        .map_err(|e| format!("CPU load query failed: {:?}", e))?;
-
-    if let Some(total) = results.first() {
-        if let Some(pct) = total.percent_processor_time {
-            return Ok(pct as f32);
-        }
-    }
-    Err("No CPU load data".to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn get_core_loads(wmi: &WMIConnection, num_cores: u32) -> HashMap<u32, f32> {
-    let mut loads = HashMap::new();
-    let results: Result<Vec<Win32PerfFormattedDataProcessorInformation>, _> = wmi
-        .raw_query("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name!='_Total'");
-
-    if let Ok(cores) = results {
-        for core in cores {
-            if let (Some(name), Some(pct)) = (&core.name, core.percent_processor_time) {
-                if let Ok(idx) = name.parse::<u32>() {
-                    if idx < num_cores {
-                        loads.insert(idx, pct as f32);
-                    }
-                }
-            }
-        }
-    }
-    loads
-}
-
-#[cfg(target_os = "windows")]
-fn get_cpu_temperature(_wmi: &WMIConnection) -> Result<f32, String> {
-    // Try MSAcpi_ThermalZoneTemperature first
-    if let Ok(temp) = get_cpu_temp_from_thermal_zone() {
-        if temp > 0.0 {
-            return Ok(temp);
-        }
-    }
-
-    // Fallback: Try PowerShell with Get-WmiObject
-    if let Some(temp) = get_cpu_temp_from_powershell() {
-        return Ok(temp);
-    }
-
-    Ok(0.0)
-}
-
-#[cfg(target_os = "windows")]
-fn get_cpu_temp_from_thermal_zone() -> Result<f32, String> {
-    let com = COMLibrary::new().map_err(|e| format!("COM init failed: {:?}", e))?;
-    let wmi_root = WMIConnection::with_namespace_path("root\\WMI", com)
-        .map_err(|_| "Cannot connect to WMI namespace".to_string())?;
-
-    let query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
-    let results: Result<Vec<HashMap<String, Variant>>, _> = wmi_root.raw_query(query);
-
-    if let Ok(temps) = results {
-        for temp in temps {
-            if let Some(Variant::UI4(kelvin_tenths)) = temp.get("CurrentTemperature") {
-                let celsius = (*kelvin_tenths as f32 / 10.0) - 273.15;
-                if celsius > 0.0 && celsius < 150.0 {
-                    return Ok(celsius);
-                }
-            }
-        }
-    }
-    Ok(0.0)
-}
-
-#[cfg(target_os = "windows")]
-fn get_cpu_temp_from_powershell() -> Option<f32> {
+fn get_nvidia_gpu_name() -> Option<String> {
     use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
-
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    // Use PowerShell to query thermal zone temperature
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature 2>$null | Select-Object -ExpandProperty CurrentTemperature | Select-Object -First 1"
-        ])
+    let output = Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader,nounits"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() { return Some(name); }
+    }
+    None
+}
+
+/// Get NVIDIA GPU total memory via nvidia-smi
+#[cfg(target_os = "windows")]
+fn get_nvidia_memory_total() -> Option<f32> {
+    use std::process::{Command, Stdio};
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -680,48 +514,10 @@ fn get_cpu_temp_from_powershell() -> Option<f32> {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Ok(kelvin_tenths) = stdout.trim().parse::<f32>() {
-            let celsius = (kelvin_tenths / 10.0) - 273.15;
-            if celsius > 0.0 && celsius < 150.0 {
-                return Some(celsius);
-            }
-        }
+        let mb = stdout.trim().parse::<f32>().ok()?;
+        return Some(mb / 1024.0); // MB to GB
     }
-
     None
-}
-
-#[cfg(target_os = "windows")]
-fn get_gpu_info(wmi: &WMIConnection) -> Result<GpuData, String> {
-    let gpus: Vec<Win32VideoController> = wmi
-        .raw_query("SELECT Name, AdapterRAM FROM Win32_VideoController")
-        .map_err(|e| format!("GPU query failed: {:?}", e))?;
-
-    let gpu = gpus.iter()
-        .find(|g| {
-            let name = g.name.as_deref().unwrap_or("");
-            name.contains("NVIDIA") || name.contains("AMD") || name.contains("Radeon") || name.contains("GeForce")
-        })
-        .or_else(|| gpus.first())
-        .ok_or("No GPU found")?;
-
-    let name = gpu.name.clone().unwrap_or_else(|| "Unknown GPU".to_string());
-    let memory_total = gpu.adapter_r_a_m.map(|m| m as f32 / 1_073_741_824.0).unwrap_or(0.0);
-
-    // Try NVIDIA first, then AMD
-    let (temperature, load, memory_used, frequency) = get_nvidia_smi_stats()
-        .or_else(get_amd_gpu_stats)
-        .unwrap_or((0.0, 0.0, 0.0, 0.0));
-
-    Ok(GpuData {
-        name,
-        temperature,
-        max_temperature: 95.0,
-        load,
-        frequency,
-        memory_used,
-        memory_total: if memory_total > 0.0 { memory_total } else { 8.0 },
-    })
 }
 
 #[cfg(target_os = "windows")]
@@ -798,201 +594,9 @@ fn get_amd_gpu_stats() -> Option<(f32, f32, f32, f32)> {
     None
 }
 
-#[cfg(target_os = "windows")]
-fn get_storage_info(wmi: &WMIConnection) -> Result<Vec<StorageData>, String> {
-    // Get physical disk info
-    let disks: Vec<Win32DiskDrive> = wmi
-        .raw_query("SELECT Model, Size FROM Win32_DiskDrive")
-        .map_err(|e| format!("Storage query failed: {:?}", e))?;
-
-    // Get logical disk info for usage percentage
-    let logical_disks: Vec<Win32LogicalDisk> = wmi
-        .raw_query("SELECT DeviceID, Size, FreeSpace, VolumeName FROM Win32_LogicalDisk WHERE DriveType=3")
-        .unwrap_or_default();
-
-    // Calculate total used percentage from logical disks
-    let total_size: u64 = logical_disks.iter().filter_map(|d| d.size).sum();
-    let total_free: u64 = logical_disks.iter().filter_map(|d| d.free_space).sum();
-    let used_percent = if total_size > 0 {
-        ((total_size - total_free) as f32 / total_size as f32) * 100.0
-    } else {
-        0.0
-    };
-
-    // Try to get NVMe temperatures via PowerShell
-    let nvme_temps = get_nvme_temperatures();
-
-    let storage_data: Vec<StorageData> = disks
-        .iter()
-        .filter_map(|disk| {
-            let name = disk.model.clone()?;
-            let total_gb = disk.size.map(|s| s as f32 / 1_073_741_824.0).unwrap_or(0.0);
-
-            // Try to find matching temperature from NVMe data
-            let temperature = nvme_temps.iter()
-                .find(|(model, _)| name.contains(model) || model.contains(&name))
-                .map(|(_, temp)| *temp)
-                .unwrap_or(0.0);
-
-            Some(StorageData {
-                name,
-                temperature,
-                used_space: used_percent,
-                total_space: total_gb,
-            })
-        })
-        .collect();
-
-    if storage_data.is_empty() {
-        Err("No storage devices found".to_string())
-    } else {
-        Ok(storage_data)
-    }
-}
-
-/// Get NVMe drive temperatures using PowerShell and Get-PhysicalDisk
-#[cfg(target_os = "windows")]
-fn get_nvme_temperatures() -> Vec<(String, f32)> {
-    use std::process::{Command, Stdio};
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    // PowerShell command to get disk temperatures
-    // Note: This requires Windows 10/11 and appropriate permissions
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            r#"Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object DeviceId, Temperature | ForEach-Object { "$($_.DeviceId),$($_.Temperature)" }"#
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let mut temps = Vec::new();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() >= 2 {
-                    if let Ok(temp) = parts[1].trim().parse::<f32>() {
-                        // Get disk model name by DeviceId
-                        if let Ok(model) = get_disk_model_by_id(parts[0].trim()) {
-                            temps.push((model, temp));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    temps
-}
-
-/// Get disk model name by device ID
-#[cfg(target_os = "windows")]
-fn get_disk_model_by_id(device_id: &str) -> Result<String, ()> {
-    use std::process::{Command, Stdio};
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(r#"(Get-PhysicalDisk | Where-Object DeviceId -eq '{}').FriendlyName"#, device_id)
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|_| ())?;
-
-    if output.status.success() {
-        let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !model.is_empty() {
-            return Ok(model);
-        }
-    }
-    Err(())
-}
-
-#[cfg(target_os = "windows")]
-fn get_motherboard_info(wmi: &WMIConnection) -> Result<MotherboardData, String> {
-    let boards: Vec<Win32BaseBoard> = wmi
-        .raw_query("SELECT Manufacturer, Product FROM Win32_BaseBoard")
-        .map_err(|e| format!("Motherboard query failed: {:?}", e))?;
-
-    let board = boards.first().ok_or("No motherboard found")?;
-    let manufacturer = board.manufacturer.clone().unwrap_or_default();
-    let product = board.product.clone().unwrap_or_default();
-    let name = format!("{} {}", manufacturer, product).trim().to_string();
-    let fans = get_fan_speeds(wmi);
-
-    Ok(MotherboardData {
-        name,
-        temperature: 0.0,
-        fans,
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn get_fan_speeds(wmi: &WMIConnection) -> Vec<FanData> {
-    let win32_fans: Result<Vec<Win32Fan>, _> = wmi
-        .raw_query("SELECT Name, DesiredSpeed FROM Win32_Fan");
-
-    if let Ok(fans) = win32_fans {
-        let fan_data: Vec<FanData> = fans
-            .iter()
-            .filter_map(|f| {
-                let name = f.name.clone().unwrap_or_else(|| "Fan".to_string());
-                let speed = f.desired_speed.unwrap_or(0) as u32;
-                if speed > 0 { Some(FanData { name, speed }) } else { None }
-            })
-            .collect();
-
-        if !fan_data.is_empty() {
-            return fan_data;
-        }
-    }
-
-    let cim_fans: Result<Vec<HashMap<String, Variant>>, _> = wmi
-        .raw_query("SELECT Name, DesiredSpeed FROM CIM_Fan");
-
-    if let Ok(fans) = cim_fans {
-        let fan_data: Vec<FanData> = fans
-            .iter()
-            .filter_map(|f| {
-                let name = match f.get("Name") {
-                    Some(Variant::String(s)) => s.clone(),
-                    _ => "Fan".to_string(),
-                };
-                let speed = match f.get("DesiredSpeed") {
-                    Some(Variant::UI8(s)) => *s as u32,
-                    Some(Variant::UI4(s)) => *s,
-                    Some(Variant::I4(s)) => *s as u32,
-                    _ => 0,
-                };
-                if speed > 0 { Some(FanData { name, speed }) } else { None }
-            })
-            .collect();
-
-        if !fan_data.is_empty() {
-            return fan_data;
-        }
-    }
-
-    Vec::new()
-}
-
 // macOS implementation using sysinfo for real hardware monitoring
 #[cfg(target_os = "macos")]
-use sysinfo::{System, Components, Disks};
+use sysinfo::Components;
 
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;

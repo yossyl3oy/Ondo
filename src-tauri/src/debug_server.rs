@@ -46,6 +46,7 @@ pub async fn start_debug_server() {
             let response = match (method.as_str(), path.as_str()) {
                 (_, "/api/hardware") => handle_hardware().await,
                 (_, "/api/sensors") => handle_sensors().await,
+                (_, "/api/pawnio") => handle_pawnio(),
                 (_, "/help") => handle_help(&query),
                 (_, "/status") => handle_status(&query),
                 (_, "/logs") => handle_logs(&query),
@@ -124,6 +125,7 @@ fn handle_help(query: &HashMap<String, String>) -> String {
     {"method": "GET", "path": "/status", "description": "Process state (PID, version, log count)"},
     {"method": "GET", "path": "/api/hardware", "description": "Hardware sensor data (JSON)"},
     {"method": "GET", "path": "/api/sensors", "description": "Raw sensor list (text)"},
+    {"method": "GET", "path": "/api/pawnio", "description": "PawnIO driver status (JSON)"},
     {"method": "GET", "path": "/logs", "description": "All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware"},
     {"method": "GET", "path": "/logs/tail", "description": "Latest N lines. ?n=100 (default)"},
     {"method": "GET", "path": "/logs/search", "description": "Regex search. ?q=<pattern>&limit=200"},
@@ -145,6 +147,7 @@ Ondo Debug Server - API Reference
   GET  /status          Process state (PID, version, log count)
   GET  /api/hardware    Hardware sensor data (JSON)
   GET  /api/sensors     Raw sensor list (text)
+  GET  /api/pawnio      PawnIO driver status (JSON)
   GET  /logs            All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware
   GET  /logs/tail       Latest N lines. ?n=100 (default)
   GET  /logs/search     Regex search. ?q=<pattern>&limit=200
@@ -163,20 +166,30 @@ fn handle_status(query: &HashMap<String, String>) -> String {
     let log_count = log_buffer::count();
     let pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
+    let pawnio = crate::get_pawnio_detailed_status();
 
     if wants_json(query) {
+        let pawnio_json = serde_json::to_string(&pawnio).unwrap_or_else(|_| "{}".to_string());
         let json = format!(
-            r#"{{"status":"running","pid":{},"version":"{}","logCount":{}}}"#,
-            pid, version, log_count
+            r#"{{"status":"running","pid":{},"version":"{}","logCount":{},"pawnio":{}}}"#,
+            pid, version, log_count, pawnio_json
         );
         http_response(200, "application/json", &json)
     } else {
+        let pawnio_state = pawnio.service_state.as_deref().unwrap_or("unknown");
+        let pawnio_driver = pawnio.driver_file_exists.map(|v| if v { "found" } else { "not found" }).unwrap_or("N/A");
         let text = format!(
-            "Status: running\nPID: {}\nVersion: {}\nLog lines: {}",
-            pid, version, log_count
+            "Status: running\nPID: {}\nVersion: {}\nLog lines: {}\nPawnIO: service={}, driver_file={}",
+            pid, version, log_count, pawnio_state, pawnio_driver
         );
         http_response(200, "text/plain", &text)
     }
+}
+
+fn handle_pawnio() -> String {
+    let status = crate::get_pawnio_detailed_status();
+    let json = serde_json::to_string_pretty(&status).unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
+    http_response(200, "application/json", &json)
 }
 
 fn handle_logs(query: &HashMap<String, String>) -> String {

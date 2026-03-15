@@ -96,12 +96,3 @@ pub fn capture_lhm_error(error: &str) {
     );
 }
 
-/// Capture a WMI error (Windows only)
-#[cfg(target_os = "windows")]
-pub fn capture_wmi_error(error: &str, query_type: &str) {
-    capture_error(
-        &format!("[WMI] {}", error),
-        "wmi",
-        Some(&[("query_type", query_type)]),
-    );
-}

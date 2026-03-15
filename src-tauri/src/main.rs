@@ -217,28 +217,83 @@ async fn set_auto_start(enabled: bool) -> Result<(), String> {
 pub struct PawnIOStatus {
     installed: bool,
     checking: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    driver_file_exists: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
-fn is_pawnio_installed() -> bool {
+pub fn get_pawnio_detailed_status() -> PawnIOStatus {
     use std::process::Command;
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    // Check if PawnIO driver is loaded by checking if the service exists
+    // Check if PawnIO driver file exists in System32\drivers
+    let driver_path = std::path::Path::new(r"C:\Windows\System32\drivers\PawnIO.sys");
+    let driver_file_exists = driver_path.exists();
+
+    // Check if PawnIO service/driver is registered and its state
     let output = Command::new("sc")
         .args(["query", "PawnIO"])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
-    if let Ok(output) = output {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // If the service exists and is running, it will contain "RUNNING" or "STATE"
-        return stdout.contains("STATE") || stdout.contains("RUNNING");
-    }
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
 
-    false
+            let service_state = if stdout.contains("RUNNING") {
+                "RUNNING".to_string()
+            } else if stdout.contains("STOPPED") {
+                "STOPPED".to_string()
+            } else if stdout.contains("START_PENDING") {
+                "START_PENDING".to_string()
+            } else if stdout.contains("STOP_PENDING") {
+                "STOP_PENDING".to_string()
+            } else if !stderr.is_empty() || stdout.contains("1060") {
+                "NOT_FOUND".to_string()
+            } else {
+                format!("UNKNOWN: {}", stdout.trim())
+            };
+
+            let installed = service_state == "RUNNING";
+
+            crate::log_info!("PawnIO", "Driver status: service={}, driver_file={}", service_state, driver_file_exists);
+            if !installed {
+                crate::log_warn!("PawnIO", "Driver is not running. CPU temperature may not be available. sc output: {}", stdout.trim());
+            }
+
+            PawnIOStatus {
+                installed,
+                checking: false,
+                service_state: Some(service_state),
+                driver_file_exists: Some(driver_file_exists),
+                error: None,
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to query PawnIO service: {}", e);
+            crate::log_error!("PawnIO", "{}", error_msg);
+
+            PawnIOStatus {
+                installed: false,
+                checking: false,
+                service_state: None,
+                driver_file_exists: Some(driver_file_exists),
+                error: Some(error_msg),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_pawnio_installed() -> bool {
+    get_pawnio_detailed_status().installed
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -246,12 +301,20 @@ fn is_pawnio_installed() -> bool {
     true // Always return true on non-Windows (PawnIO not needed)
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn get_pawnio_detailed_status() -> PawnIOStatus {
+    PawnIOStatus {
+        installed: true,
+        checking: false,
+        service_state: Some("N/A (non-Windows)".to_string()),
+        driver_file_exists: None,
+        error: None,
+    }
+}
+
 #[tauri::command]
 async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
-    Ok(PawnIOStatus {
-        installed: is_pawnio_installed(),
-        checking: false,
-    })
+    Ok(get_pawnio_detailed_status())
 }
 
 #[cfg(target_os = "windows")]
