@@ -491,11 +491,6 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
         let received = data.received();
         let transmitted = data.transmitted();
 
-        // Skip interfaces with zero traffic
-        if received == 0 && transmitted == 0 {
-            continue;
-        }
-
         let rate = if interval_secs > 0.0 { interval_secs } else { 1.0 };
         result.push(NetworkInterfaceData {
             name: name.clone(),
