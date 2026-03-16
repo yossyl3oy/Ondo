@@ -1,0 +1,127 @@
+name: Update LibreHardwareMonitorLib
+
+on:
+  schedule:
+    # 毎日 9:00 UTC (18:00 JST) にチェック
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current LHM version
+        id: current
+        run: |
+          CURRENT=$(grep -oP 'Version="\K[^"]+' src-lhm/OndoHardwareMonitor.csproj)
+          echo "version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT"
+
+      - name: Get latest LHM version from NuGet
+        id: latest
+        run: |
+          # Fetch all versions including prereleases
+          VERSIONS=$(curl -s "https://api.nuget.org/v3-flatcontainer/librehardwaremonitorlib/index.json" | jq -r '.versions[]')
+          LATEST=$(echo "$VERSIONS" | tail -1)
+          echo "version=$LATEST" >> $GITHUB_OUTPUT
+          echo "Latest version: $LATEST"
+
+      - name: Check if update is needed
+        id: check
+        run: |
+          if [ "${{ steps.current.outputs.version }}" = "${{ steps.latest.outputs.version }}" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "Already up to date"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "Update available: ${{ steps.current.outputs.version }} → ${{ steps.latest.outputs.version }}"
+          fi
+
+      - name: Check if PR already exists
+        if: steps.check.outputs.needs_update == 'true'
+        id: existing-pr
+        run: |
+          PR=$(gh pr list --search "Update LibreHardwareMonitorLib to ${{ steps.latest.outputs.version }}" --state open --json number -q '.[0].number')
+          if [ -n "$PR" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "PR #$PR already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update LHM version
+        if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
+        run: |
+          sed -i 's|Version="${{ steps.current.outputs.version }}"|Version="${{ steps.latest.outputs.version }}"|' src-lhm/OndoHardwareMonitor.csproj
+
+      - name: Bump app version (patch)
+        if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
+        run: |
+          CURRENT_APP_VERSION=$(node -p "require('./package.json').version")
+          echo "Current app version: $CURRENT_APP_VERSION"
+
+          # Increment the prerelease number (e.g., 0.1.0-beta.13 → 0.1.0-beta.14)
+          NEW_APP_VERSION=$(node -e "
+            const v = '$CURRENT_APP_VERSION';
+            const match = v.match(/^(.+\.)(\d+)$/);
+            if (match) {
+              console.log(match[1] + (parseInt(match[2]) + 1));
+            } else {
+              // Fallback: append .1
+              console.log(v + '.1');
+            }
+          ")
+          echo "New app version: $NEW_APP_VERSION"
+
+          # Update package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '$NEW_APP_VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # Sync to Cargo.toml and tauri.conf.json
+          node scripts/sync-version.cjs
+
+          echo "new_app_version=$NEW_APP_VERSION" >> $GITHUB_ENV
+
+      - name: Create Pull Request
+        if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
+        run: |
+          BRANCH="chore/update-lhm-${{ steps.latest.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore: update LibreHardwareMonitorLib to ${{ steps.latest.outputs.version }}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore: update LibreHardwareMonitorLib to ${{ steps.latest.outputs.version }}" \
+            --body "$(cat <<'EOF'
+          ## Summary
+          - Update LibreHardwareMonitorLib from `${{ steps.current.outputs.version }}` to `${{ steps.latest.outputs.version }}`
+          - Bump app version to `${{ env.new_app_version }}`
+
+          ## Changes
+          - `src-lhm/OndoHardwareMonitor.csproj` - NuGet package version update
+          - `package.json` - App version bump
+          - `src-tauri/Cargo.toml` - Version sync
+          - `src-tauri/tauri.conf.json` - Version sync
+
+          > This PR was automatically generated
+          EOF
+          )" \
+            --base main \
+            --head "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
