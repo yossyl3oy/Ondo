@@ -439,7 +439,7 @@ struct SysinfoFallback {
 }
 
 #[cfg(target_os = "windows")]
-fn get_fallback_from_sysinfo(timestamp: u64) -> SysinfoFallback {
+fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
     let mut sys = System::new();
     sys.refresh_cpu_all();
     // Brief pause then refresh again for accurate CPU usage readings

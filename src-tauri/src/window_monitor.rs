@@ -73,7 +73,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         // Skip if the foreground window is Ondo itself
         if let Some(window) = app.get_webview_window("main") {
             if let Ok(hwnd) = window.hwnd() {
-                if fg == hwnd {
+                if fg.0 as isize == hwnd.0 as isize {
                     return false;
                 }
             }
