@@ -312,16 +312,6 @@ pub fn get_pawnio_detailed_status() -> PawnIOStatus {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn is_pawnio_installed() -> bool {
-    get_pawnio_detailed_status().installed
-}
-
-#[cfg(not(target_os = "windows"))]
-fn is_pawnio_installed() -> bool {
-    true // Always return true on non-Windows (PawnIO not needed)
-}
-
 #[cfg(not(target_os = "windows"))]
 pub fn get_pawnio_detailed_status() -> PawnIOStatus {
     PawnIOStatus {
