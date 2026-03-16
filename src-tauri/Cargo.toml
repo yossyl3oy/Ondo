@@ -25,13 +25,16 @@ sysinfo = "0.32"
 # Windows-specific dependencies for hardware monitoring
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
+    "implement",
     "Win32_Foundation",
     "Win32_System_Pipes",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Media_Audio",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_Devices_FunctionDiscovery",
 ] }
 
