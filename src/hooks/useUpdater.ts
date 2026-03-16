@@ -94,10 +94,10 @@ export function useUpdater() {
         return;
       }
 
+      console.log("[Updater] Downloading update...");
       let downloaded = 0;
       let contentLength = 0;
-
-      await update.downloadAndInstall((event) => {
+      await update.download((event) => {
         switch (event.event) {
           case "Started":
             contentLength = event.data.contentLength ?? 0;
@@ -114,8 +114,9 @@ export function useUpdater() {
             break;
         }
       });
-
-      // Relaunch the app after update
+      console.log("[Updater] Download complete, installing...");
+      await update.install();
+      console.log("[Updater] Install complete, relaunching...");
       await relaunch();
     } catch (error) {
       console.error("[Updater] Download error:", error);

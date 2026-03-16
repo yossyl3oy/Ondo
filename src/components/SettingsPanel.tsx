@@ -262,7 +262,9 @@ export function SettingsPanel({
                         />
                       </div>
                       <span className="update-progress-text">
-                        Downloading... {Math.round(downloadProgress || 0)}%
+                        {(downloadProgress || 0) >= 100
+                          ? "Installing..."
+                          : `Downloading... ${Math.round(downloadProgress || 0)}%`}
                       </span>
                     </div>
                   ) : (
