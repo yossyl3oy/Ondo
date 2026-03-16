@@ -90,7 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,
-  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "audio", "network"],
+  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio"],
   hiddenSections: [],
 };
 

@@ -57,17 +57,18 @@ export function HudWidget({
   const [isDragging, setIsDragging] = useState(false);
   const [draggedType, setDraggedType] = useState<SectionType | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
-  const [visualOrder, setVisualOrder] = useState<SectionType[]>(sectionOrder);
+  const visualOrderRef = useRef<SectionType[]>(sectionOrder);
   const [collapsedSections, setCollapsedSections] = useState<Set<SectionType>>(new Set());
   const dragRef = useRef<DragInfo | null>(null);
+  const wasDraggingRef = useRef(false);
   const sectionRefs = useRef<Map<SectionType, HTMLDivElement>>(new Map());
   const trashZoneRef = useRef<HTMLDivElement | null>(null);
   const { cpu, gpu } = hardwareData;
 
-  // Keep visualOrder in sync with sectionOrder when not dragging
+  // Keep visualOrderRef in sync with sectionOrder when not dragging
   useEffect(() => {
     if (!isDragging) {
-      setVisualOrder(sectionOrder);
+      visualOrderRef.current = sectionOrder;
     }
   }, [sectionOrder, isDragging]);
 
@@ -83,7 +84,7 @@ export function HudWidget({
   }, []);
 
   const toggleCollapse = useCallback((type: SectionType) => {
-    if (dragRef.current?.isDragging) return;
+    if (dragRef.current?.isDragging || wasDraggingRef.current) return;
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(type)) {
@@ -112,6 +113,7 @@ export function HudWidget({
         case "storage": return !!hardwareData.storage && hardwareData.storage.length > 0;
         case "motherboard": return !!hardwareData.motherboard;
         case "network": return !!hardwareData.network && hardwareData.network.length > 0;
+        case "audio": return true;
         default: return false;
       }
     });
@@ -211,7 +213,7 @@ export function HudWidget({
     }
 
     // Update visual order for the drop
-    setVisualOrder(newOrder);
+    visualOrderRef.current = newOrder;
 
     // Check if over trash zone
     const trashEl = trashZoneRef.current;
@@ -228,6 +230,10 @@ export function HudWidget({
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
 
     if (drag.isDragging) {
+      // Prevent the subsequent click event from toggling collapse
+      wasDraggingRef.current = true;
+      requestAnimationFrame(() => { wasDraggingRef.current = false; });
+
       // Clear all inline styles immediately
       for (const type of drag.currentOrder) {
         const el = sectionRefs.current.get(type);
@@ -248,7 +254,7 @@ export function HudWidget({
           setIsOverTrash(false);
         });
       } else {
-        const finalOrder = [...visualOrder];
+        const finalOrder = [...visualOrderRef.current];
 
         // Build the full order (including invisible sections)
         const result: SectionType[] = [];
@@ -276,7 +282,7 @@ export function HudWidget({
     }
 
     dragRef.current = null;
-  }, [visualOrder, sectionOrder, hiddenSections, isOverTrash, onSectionOrderChange, onHiddenSectionsChange]);
+  }, [sectionOrder, hiddenSections, isOverTrash, onSectionOrderChange, onHiddenSectionsChange]);
 
   const setSectionRef = useCallback((type: SectionType, el: HTMLDivElement | null) => {
     if (el) {
@@ -652,7 +658,7 @@ export function HudWidget({
           style={{ cursor: "pointer" }}
         >
           <div className="section-indicator network" />
-          <span className="section-label">NET</span>
+          <span className="section-label">NETWORK</span>
           <span className="section-name">
             {hardwareData.network.length > 1
               ? `${hardwareData.network.length} adapters`
@@ -775,7 +781,7 @@ export function HudWidget({
             rows.push(
               <div key="network" className="mini-row network">
                 <div className="section-indicator network" />
-                <span className="mini-label">NET</span>
+                <span className="mini-label">NETWORK</span>
                 <span className="mini-net-speed"><span className="mini-unit">▼</span>{formatSpeed(totalDl)}</span>
                 <span className="mini-divider">|</span>
                 <span className="mini-net-speed"><span className="mini-unit">▲</span>{formatSpeed(totalUl)}</span>
