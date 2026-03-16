@@ -17,6 +17,11 @@
   right: 0;
   height: 32px;
   z-index: 50;
+  cursor: grab;
+}
+
+.hud-widget > .drag-region:active {
+  cursor: grabbing;
 }
 
 @keyframes widgetFadeIn {
@@ -807,6 +812,11 @@
 .hud-widget.mini {
   padding: 4px 6px;
   height: auto;
+  cursor: grab;
+}
+
+.hud-widget.mini:active {
+  cursor: grabbing;
 }
 
 .mini-content {

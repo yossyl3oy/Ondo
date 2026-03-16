@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 import type { HardwareData, SectionType, AudioDevice } from "../types";
 import { TemperatureGauge } from "./TemperatureGauge";
@@ -792,7 +793,7 @@ export function HudWidget({
   // ── Mini mode render ───────────────────────────────────────────────────
   if (miniMode) {
     return (
-      <div className="hud-widget mini">
+      <div className="hud-widget mini" onMouseDown={() => getCurrentWindow().startDragging()}>
         <div className="mini-content">
           {renderMiniContent()}
         </div>
@@ -804,7 +805,7 @@ export function HudWidget({
   return (
     <div className="hud-widget">
       {/* Drag region - separate from header */}
-      <div className="drag-region" />
+      <div className="drag-region" onMouseDown={() => getCurrentWindow().startDragging()} />
 
       {/* Header */}
       <div className="hud-header">
