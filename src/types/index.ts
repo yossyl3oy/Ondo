@@ -48,6 +48,11 @@ export interface HardwareData {
       speed: number; // RPM
     }>;
   } | null;
+  network: Array<{
+    name: string;
+    receivedPerSec: number; // bytes/sec
+    sentPerSec: number; // bytes/sec
+  }> | null;
   timestamp: number;
   cpuError?: string;
   gpuError?: string;
@@ -85,11 +90,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,
-  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "audio"],
+  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "audio", "network"],
   hiddenSections: [],
 };
 
-export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio";
+export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio" | "network";
 
 export interface AudioDevice {
   id: string;

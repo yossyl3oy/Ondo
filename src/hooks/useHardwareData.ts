@@ -15,6 +15,7 @@ const INITIAL_DATA: HardwareData = {
   gpu: null,
   storage: null,
   motherboard: null,
+  network: null,
   timestamp: Date.now(),
 };
 
@@ -127,6 +128,13 @@ function generateMockData(): HardwareData {
         { name: "Chassis Fan 1", speed: 800 + Math.round(Math.random() * 300) },
       ],
     },
+    network: [
+      {
+        name: "Ethernet",
+        receivedPerSec: Math.round(Math.random() * 5_000_000),
+        sentPerSec: Math.round(Math.random() * 1_000_000),
+      },
+    ],
     timestamp: Date.now(),
   };
 }

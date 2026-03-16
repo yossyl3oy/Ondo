@@ -22,17 +22,27 @@ export function useSettings(): UseSettingsResult {
     loadSettings();
   }, []);
 
+  const migrateSettings = (s: AppSettings): AppSettings => {
+    // Ensure new section types are added to existing sectionOrder
+    for (const section of DEFAULT_SETTINGS.sectionOrder) {
+      if (!s.sectionOrder.includes(section) && !s.hiddenSections.includes(section)) {
+        s.sectionOrder.push(section);
+      }
+    }
+    return s;
+  };
+
   const loadSettings = async () => {
     try {
       // Try to load from Tauri store first
       const stored = await invoke<AppSettings | null>("get_settings");
       if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...stored });
+        setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...stored }));
       } else {
         // Fallback to localStorage for development
         const localStored = localStorage.getItem(STORAGE_KEY);
         if (localStored) {
-          setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
+          setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
         }
       }
     } catch (err) {
@@ -43,7 +53,7 @@ export function useSettings(): UseSettingsResult {
       const localStored = localStorage.getItem(STORAGE_KEY);
       if (localStored) {
         try {
-          setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
+          setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
         } catch {
           // Use defaults
         }

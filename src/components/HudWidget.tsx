@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { HardwareData, SectionType, AudioDevice } from "../types";
 import { TemperatureGauge } from "./TemperatureGauge";
 import { CpuCoreGrid } from "./CpuCoreGrid";
+import { NetworkGraph } from "./NetworkGraph";
 import "./HudWidget.css";
 
 const DRAG_THRESHOLD = 5;
@@ -109,10 +110,11 @@ export function HudWidget({
         case "gpu": return !!gpu;
         case "storage": return !!hardwareData.storage && hardwareData.storage.length > 0;
         case "motherboard": return !!hardwareData.motherboard;
+        case "network": return !!hardwareData.network && hardwareData.network.length > 0;
         default: return false;
       }
     });
-  }, [sectionOrder, hiddenSections, cpu, gpu, hardwareData.storage, hardwareData.motherboard]);
+  }, [sectionOrder, hiddenSections, cpu, gpu, hardwareData.storage, hardwareData.motherboard, hardwareData.network]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent, sectionType: SectionType) => {
     // Don't start drag on interactive elements
@@ -631,12 +633,88 @@ export function HudWidget({
     );
   };
 
+  const formatSpeed = (bytesPerSec: number): string => {
+    if (bytesPerSec >= 1_073_741_824) return `${(bytesPerSec / 1_073_741_824).toFixed(1)} GB/s`;
+    if (bytesPerSec >= 1_048_576) return `${(bytesPerSec / 1_048_576).toFixed(1)} MB/s`;
+    if (bytesPerSec >= 1_024) return `${(bytesPerSec / 1_024).toFixed(1)} KB/s`;
+    return `${Math.round(bytesPerSec)} B/s`;
+  };
+
+  const renderNetworkSection = () => {
+    if (!hardwareData.network || hardwareData.network.length === 0) return null;
+    const collapsed = collapsedSections.has("network");
+    return (
+      <>
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("network")}
+          style={{ cursor: "pointer" }}
+        >
+          <div className="section-indicator network" />
+          <span className="section-label">NET</span>
+          <span className="section-name">
+            {hardwareData.network.length > 1
+              ? `${hardwareData.network.length} adapters`
+              : hardwareData.network[0].name}
+          </span>
+          {collapsed && (
+            <div className="collapsed-values">
+              <span className="collapsed-val">
+                <span className="collapsed-val-unit">▼</span>{formatSpeed(hardwareData.network.reduce((sum, n) => sum + n.receivedPerSec, 0))}
+              </span>
+              <span className="collapsed-val">
+                <span className="collapsed-val-unit">▲</span>{formatSpeed(hardwareData.network.reduce((sum, n) => sum + n.sentPerSec, 0))}
+              </span>
+            </div>
+          )}
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
+        </div>
+
+        {collapsed ? (
+          <div className="collapsed-bar">
+            <div className="collapsed-bar-fill network" style={{ width: "0%" }} />
+          </div>
+        ) : (
+          hardwareData.network.map((iface, index) => (
+            <div key={index} className={index > 0 ? "network-iface-separator" : undefined}>
+              {hardwareData.network!.length > 1 && (
+                <div className="network-iface-name" title={iface.name}>
+                  {iface.name}
+                </div>
+              )}
+
+              <div className="network-speeds">
+                <div className="network-speed-item">
+                  <span className="network-speed-icon dl">▼</span>
+                  <span className="network-speed-label">DL</span>
+                  <span className="network-speed-value">{formatSpeed(iface.receivedPerSec)}</span>
+                </div>
+                <div className="network-speed-item">
+                  <span className="network-speed-icon ul">▲</span>
+                  <span className="network-speed-label">UL</span>
+                  <span className="network-speed-value">{formatSpeed(iface.sentPerSec)}</span>
+                </div>
+              </div>
+
+              <NetworkGraph
+                receivedPerSec={iface.receivedPerSec}
+                sentPerSec={iface.sentPerSec}
+                formatSpeed={formatSpeed}
+              />
+            </div>
+          ))
+        )}
+      </>
+    );
+  };
+
   const sectionRenderers: Record<SectionType, () => React.ReactNode> = {
     cpu: renderCpuSection,
     gpu: renderGpuSection,
     storage: renderStorageSection,
     motherboard: renderMotherboardSection,
     audio: renderAudioSection,
+    network: renderNetworkSection,
   };
 
   // ── Mini mode: compact 1-line per section ──────────────────────────────
@@ -687,6 +765,21 @@ export function HudWidget({
         case "motherboard":
           if (hardwareData.motherboard) {
             rows.push(renderMiniRow("motherboard", "MB", hardwareData.motherboard.temperature, 0));
+          }
+          break;
+        case "network":
+          if (hardwareData.network && hardwareData.network.length > 0) {
+            const totalDl = hardwareData.network.reduce((s, n) => s + n.receivedPerSec, 0);
+            const totalUl = hardwareData.network.reduce((s, n) => s + n.sentPerSec, 0);
+            rows.push(
+              <div key="network" className="mini-row network">
+                <div className="section-indicator network" />
+                <span className="mini-label">NET</span>
+                <span className="mini-net-speed"><span className="mini-unit">▼</span>{formatSpeed(totalDl)}</span>
+                <span className="mini-divider">|</span>
+                <span className="mini-net-speed"><span className="mini-unit">▲</span>{formatSpeed(totalUl)}</span>
+              </div>
+            );
           }
           break;
         // audio is omitted in mini mode

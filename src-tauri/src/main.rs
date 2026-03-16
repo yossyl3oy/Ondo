@@ -70,11 +70,21 @@ pub struct MotherboardData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkInterfaceData {
+    name: String,
+    #[serde(rename = "receivedPerSec")]
+    received_per_sec: f64, // bytes/sec
+    #[serde(rename = "sentPerSec")]
+    sent_per_sec: f64, // bytes/sec
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareData {
     cpu: Option<CpuData>,
     gpu: Option<GpuData>,
     storage: Option<Vec<StorageData>>,
     motherboard: Option<MotherboardData>,
+    network: Option<Vec<NetworkInterfaceData>>,
     timestamp: u64,
     #[serde(rename = "cpuError")]
     cpu_error: Option<String>,

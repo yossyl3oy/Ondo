@@ -312,6 +312,77 @@
   box-shadow: 0 0 8px #1abc9c;
 }
 
+.section-indicator.network {
+  background: #3498db;
+  box-shadow: 0 0 8px #3498db;
+}
+
+/* Network section styles */
+.network-iface-separator {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--hud-border);
+}
+
+.network-iface-name {
+  font-size: 9px;
+  color: var(--hud-text-secondary);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-speeds {
+  display: flex;
+  gap: 12px;
+}
+
+.network-speed-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.network-speed-icon {
+  font-size: 8px;
+  line-height: 1;
+}
+
+.network-speed-icon.dl {
+  color: var(--hud-success);
+}
+
+.network-speed-icon.ul {
+  color: var(--hud-primary);
+}
+
+.network-speed-label {
+  font-size: 8px;
+  color: var(--hud-text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.network-speed-value {
+  font-size: 11px;
+  color: var(--hud-text);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.collapsed-bar-fill.network {
+  background: linear-gradient(90deg, #3498db, #2980b9);
+  box-shadow: 0 0 6px rgba(52, 152, 219, 0.5);
+}
+
+/* Mini mode network speed */
+.mini-net-speed {
+  font-size: 10px;
+  color: var(--hud-text);
+  font-family: "JetBrains Mono", monospace;
+  white-space: nowrap;
+}
+
 /* Audio section styles */
 .audio-select-wrapper {
   display: flex;

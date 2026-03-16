@@ -1,4 +1,4 @@
-use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData};
+use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, NetworkInterfaceData};
 
 #[cfg(target_os = "windows")]
 use crate::FanData;
@@ -95,6 +95,15 @@ struct LhmDaemon {
 static LHM_DAEMON: Mutex<Option<LhmDaemon>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
+struct NetworkMonitor {
+    networks: Networks,
+    last_refresh: std::time::Instant,
+}
+
+#[cfg(target_os = "windows")]
+static NETWORK_MONITOR: Mutex<Option<NetworkMonitor>> = Mutex::new(None);
+
+#[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
     tokio::task::spawn_blocking(|| {
         let timestamp = SystemTime::now()
@@ -107,6 +116,26 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
         // Get sysinfo data for fallback/supplement (no WMI)
         let sysinfo_data = get_fallback_from_sysinfo(timestamp);
+
+        // Collect network data
+        let network = {
+            let mut guard = NETWORK_MONITOR.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                *guard = Some(NetworkMonitor {
+                    networks: Networks::new_with_refreshed_list(),
+                    last_refresh: std::time::Instant::now(),
+                });
+                // First call: return empty (no delta yet)
+                Vec::new()
+            } else {
+                let mon = guard.as_mut().unwrap();
+                let elapsed = mon.last_refresh.elapsed().as_secs_f64();
+                mon.networks.refresh();
+                mon.last_refresh = std::time::Instant::now();
+                collect_network_data(&mon.networks, elapsed)
+            }
+        };
+        let network = if network.is_empty() { None } else { Some(network) };
 
         if let Some(lhm) = lhm_data {
             // Use LHM data, supplement with sysinfo where needed
@@ -210,6 +239,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 gpu,
                 storage,
                 motherboard,
+                network,
                 timestamp,
                 cpu_error: None,
                 gpu_error: None,
@@ -222,6 +252,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 gpu: sysinfo_data.gpu,
                 storage: sysinfo_data.storage,
                 motherboard: None,
+                network,
                 timestamp,
                 cpu_error: None,
                 gpu_error: None,
@@ -428,7 +459,52 @@ pub fn shutdown_lhm_daemon() {
 }
 
 // sysinfo for hardware data (replaces WMI on Windows to avoid application control policy blocks)
-use sysinfo::{System, Disks};
+use sysinfo::{System, Disks, Networks};
+
+/// Collect network interface data from sysinfo Networks.
+/// `networks` must have been refreshed before calling this.
+/// `interval_secs` is the time since last refresh (for rate calculation).
+fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkInterfaceData> {
+    let mut result = Vec::new();
+    for (name, data) in networks.list() {
+        // Filter out loopback and virtual interfaces
+        let lower = name.to_lowercase();
+        if lower == "lo" || lower == "lo0"
+            || lower.starts_with("veth")
+            || lower.starts_with("docker")
+            || lower.starts_with("br-")
+            || lower.starts_with("vmnet")
+            || lower.starts_with("virbr")
+            || lower.starts_with("vbox")
+            || lower.starts_with("utun")
+            || lower.starts_with("awdl")
+            || lower.starts_with("llw")
+            || lower.starts_with("bridge")
+            || lower.starts_with("ap")
+            || lower.starts_with("gif")
+            || lower.starts_with("stf")
+            || lower.starts_with("anpi")
+        {
+            continue;
+        }
+
+        let received = data.received();
+        let transmitted = data.transmitted();
+
+        // Skip interfaces with zero traffic
+        if received == 0 && transmitted == 0 {
+            continue;
+        }
+
+        let rate = if interval_secs > 0.0 { interval_secs } else { 1.0 };
+        result.push(NetworkInterfaceData {
+            name: name.clone(),
+            received_per_sec: received as f64 / rate,
+            sent_per_sec: transmitted as f64 / rate,
+        });
+    }
+    result
+}
 
 /// Fallback data source using sysinfo crate (no WMI dependency)
 #[cfg(target_os = "windows")]
@@ -656,6 +732,8 @@ struct MacOsMonitor {
     system: System,
     components: Components,
     disks: Disks,
+    networks: Networks,
+    last_refresh: std::time::Instant,
     gpu_name: String,
     gpu_memory_total: f32,
     model_name: String,
@@ -688,6 +766,8 @@ fn init_macos_monitor() -> MacOsMonitor {
         system,
         components,
         disks,
+        networks: Networks::new_with_refreshed_list(),
+        last_refresh: std::time::Instant::now(),
         gpu_name,
         gpu_memory_total,
         model_name,
@@ -758,6 +838,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         monitor.system.refresh_cpu_usage();
         monitor.components.refresh_list();
         monitor.disks.refresh_list();
+        let net_elapsed = monitor.last_refresh.elapsed().as_secs_f64();
+        monitor.networks.refresh();
+        monitor.last_refresh = std::time::Instant::now();
 
         // On first call, CPU usage is always 0% — mark as initialized for subsequent calls
         if !monitor.initialized {
@@ -903,11 +986,19 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             fans: Vec::new(), // Fan speeds not available through sysinfo on macOS
         });
 
+        // Network
+        let network_data = if monitor.initialized {
+            collect_network_data(&monitor.networks, net_elapsed)
+        } else {
+            Vec::new()
+        };
+
         Ok(HardwareData {
             cpu,
             gpu,
             storage: if storage.is_empty() { None } else { Some(storage) },
             motherboard,
+            network: if network_data.is_empty() { None } else { Some(network_data) },
             timestamp,
             cpu_error: None,
             gpu_error: None,
