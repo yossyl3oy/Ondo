@@ -510,6 +510,18 @@ async fn set_window_min_size(
 }
 
 #[tauri::command]
+async fn set_window_shadow(app: AppHandle, enable: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_shadow(enable).map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "set_window_shadow");
+            err
+        })?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_audio_devices() -> Result<Vec<audio::AudioDevice>, String> {
     audio::get_audio_devices()
 }
@@ -584,6 +596,7 @@ fn main() {
             get_window_state,
             restore_window_state,
             set_window_min_size,
+            set_window_shadow,
             check_pawnio_status,
             download_and_install_pawnio,
             get_audio_devices,

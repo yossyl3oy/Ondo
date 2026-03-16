@@ -72,6 +72,8 @@ function App() {
 
           // Remove min size constraint so window can shrink below 350px
           await invoke("set_window_min_size", { width: null, height: null });
+          // Disable window shadow to remove transparent border in mini mode
+          await invoke("set_window_shadow", { enable: false });
 
           // Wait a frame for React to render mini content, then fit window to it
           requestAnimationFrame(async () => {
@@ -81,11 +83,12 @@ function App() {
               : 120;
             const dpr = window.devicePixelRatio || 1;
             const physicalHeight = Math.round(cssHeight * dpr);
+            const miniWidth = Math.round(180 * dpr);
             await invoke("restore_window_state", {
               state: {
                 x: currentState.x,
                 y: currentState.y,
-                width: currentState.width,
+                width: miniWidth,
                 height: physicalHeight,
               },
             });
@@ -99,9 +102,12 @@ function App() {
             width: Math.round(180 * dpr),
             height: Math.round(350 * dpr),
           });
-          // Restore saved window state
+          // Re-enable window shadow
+          await invoke("set_window_shadow", { enable: true });
+          // Restore saved window size, then reposition to avoid overflow
           await invoke("restore_window_state", { state: savedWindowStateRef.current });
           savedWindowStateRef.current = null;
+          await invoke("set_window_position", { position: settings.position });
         }
       } catch {
         // Ignore errors during window resize
