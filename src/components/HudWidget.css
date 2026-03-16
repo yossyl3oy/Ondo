@@ -157,7 +157,12 @@
   position: relative;
   touch-action: none;
   user-select: none;
-  transition: scale 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease;
+  transition: scale 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease,
+              padding 0.25s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.hud-section:has(.hud-section-header.collapsed) {
+  padding-bottom: 4px;
 }
 
 .hud-section:active {
@@ -396,6 +401,105 @@
   font-size: 10px;
   color: var(--hud-text-secondary);
   transition: transform 0.2s ease;
+}
+
+/* Collapsed summary values shown in header */
+.collapsed-values {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.collapsed-val {
+  font-size: 10px;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-accent);
+  font-weight: 600;
+}
+
+.collapsed-val-unit {
+  font-size: 8px;
+  color: var(--hud-text-secondary);
+  margin-left: 1px;
+}
+
+/* When collapsed, remove header bottom margin */
+.hud-section-header.collapsed {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+/* Collapsed usage bar */
+.collapsed-bar {
+  height: 3px;
+  background: var(--hud-border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+
+.collapsed-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  background: linear-gradient(90deg, var(--hud-primary), var(--hud-accent));
+}
+
+.collapsed-bar-fill.gpu {
+  background: linear-gradient(90deg, var(--hud-success), #00ffcc);
+}
+
+.collapsed-bar-fill.storage {
+  background: linear-gradient(90deg, var(--hud-warning), #f39c12);
+}
+
+/* Multiple bars for storage drives */
+.collapsed-bar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.collapsed-bar-group .collapsed-bar {
+  margin-top: 0;
+}
+
+/* Cores toggle link */
+.cores-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hud-border);
+  cursor: pointer;
+}
+
+.cores-toggle-label {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--hud-text-secondary);
+  transition: color 0.2s ease;
+}
+
+.cores-toggle:hover .cores-toggle-label {
+  color: var(--hud-primary);
+}
+
+/* Storage drive name when multiple drives */
+.storage-drive-name {
+  font-size: 9px;
+  color: var(--hud-text-secondary);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Metrics */

@@ -54,6 +54,7 @@ export function HudWidget({
   const [draggedType, setDraggedType] = useState<SectionType | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
   const [visualOrder, setVisualOrder] = useState<SectionType[]>(sectionOrder);
+  const [collapsedSections, setCollapsedSections] = useState<Set<SectionType>>(new Set());
   const dragRef = useRef<DragInfo | null>(null);
   const sectionRefs = useRef<Map<SectionType, HTMLDivElement>>(new Map());
   const trashZoneRef = useRef<HTMLDivElement | null>(null);
@@ -75,6 +76,19 @@ export function HudWidget({
       .catch((e) => {
         console.error("[HudWidget] Version error:", e);
       });
+  }, []);
+
+  const toggleCollapse = useCallback((type: SectionType) => {
+    if (dragRef.current?.isDragging) return;
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
   }, []);
 
   const getTemperatureStatus = (temp: number, max: number) => {
@@ -269,13 +283,12 @@ export function HudWidget({
 
   const renderCpuSection = () => {
     if (!cpu) return null;
+    const collapsed = collapsedSections.has("cpu");
     return (
       <>
         <div
-          className="hud-section-header"
-          onClick={() => {
-            if (!dragRef.current?.isDragging) setShowCores(!showCores);
-          }}
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("cpu")}
           style={{ cursor: "pointer" }}
         >
           <div className="section-indicator cpu" />
@@ -283,38 +296,61 @@ export function HudWidget({
           <span className="section-name" title={cpu.name}>
             {cpu.name}
           </span>
-          <span className="expand-icon">{showCores ? "▾" : "▸"}</span>
-        </div>
-
-        <div className="hud-metrics">
-          <TemperatureGauge
-            value={cpu.temperature}
-            max={cpu.maxTemperature}
-            status={getTemperatureStatus(cpu.temperature, cpu.maxTemperature)}
-            label="TEMP"
-          />
-          <div className="metric-divider" />
-          <div className="metric-item">
-            <span className="metric-label">LOAD</span>
-            <span className="metric-value">{Math.round(cpu.load)}%</span>
-            <div className="metric-bar">
-              <div
-                className="metric-bar-fill"
-                style={{ width: `${Math.round(cpu.load)}%` }}
-              />
+          {collapsed && (
+            <div className="collapsed-values">
+              <span className="collapsed-val">{cpu.temperature}<span className="collapsed-val-unit">°</span></span>
+              <span className="collapsed-val">{Math.round(cpu.load)}<span className="collapsed-val-unit">%</span></span>
             </div>
+          )}
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
+        </div>
+
+        {collapsed ? (
+          <div className="collapsed-bar">
+            <div className="collapsed-bar-fill" style={{ width: `${Math.round(cpu.load)}%` }} />
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="hud-metrics">
+              <TemperatureGauge
+                value={cpu.temperature}
+                max={cpu.maxTemperature}
+                status={getTemperatureStatus(cpu.temperature, cpu.maxTemperature)}
+                label="TEMP"
+              />
+              <div className="metric-divider" />
+              <div className="metric-item">
+                <span className="metric-label">LOAD</span>
+                <span className="metric-value">{Math.round(cpu.load)}%</span>
+                <div className="metric-bar">
+                  <div
+                    className="metric-bar-fill"
+                    style={{ width: `${Math.round(cpu.load)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
 
-        <div className="cpu-frequency">
-          <span className="frequency-label">FREQ</span>
-          <span className="frequency-value">
-            {cpu.frequency > 0 ? `${cpu.frequency.toFixed(2)} GHz` : "N/A"}
-          </span>
-        </div>
+            <div className="cpu-frequency">
+              <span className="frequency-label">FREQ</span>
+              <span className="frequency-value">
+                {cpu.frequency > 0 ? `${cpu.frequency.toFixed(2)} GHz` : "N/A"}
+              </span>
+            </div>
 
-        {showCores && cpu.cores && cpu.cores.length > 0 && (
-          <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
+            {showCores && cpu.cores && cpu.cores.length > 0 && (
+              <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
+            )}
+            {cpu.cores && cpu.cores.length > 0 && (
+              <div
+                className="cores-toggle"
+                onClick={(e) => { e.stopPropagation(); setShowCores(!showCores); }}
+              >
+                <span className="cores-toggle-label">{showCores ? "Hide Cores" : "Show Cores"}</span>
+                <span className="expand-icon">{showCores ? "▾" : "▸"}</span>
+              </div>
+            )}
+          </>
         )}
       </>
     );
@@ -322,163 +358,235 @@ export function HudWidget({
 
   const renderGpuSection = () => {
     if (!gpu) return null;
+    const collapsed = collapsedSections.has("gpu");
     return (
       <>
-        <div className="hud-section-header">
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("gpu")}
+          style={{ cursor: "pointer" }}
+        >
           <div className="section-indicator gpu" />
           <span className="section-label">GPU</span>
           <span className="section-name" title={gpu.name}>
             {gpu.name}
           </span>
-        </div>
-
-        <div className="hud-metrics">
-          <TemperatureGauge
-            value={gpu.temperature}
-            max={gpu.maxTemperature}
-            status={getTemperatureStatus(gpu.temperature, gpu.maxTemperature)}
-            label="TEMP"
-          />
-          <div className="metric-divider" />
-          <div className="metric-item">
-            <span className="metric-label">LOAD</span>
-            <span className="metric-value">{Math.round(gpu.load)}%</span>
-            <div className="metric-bar">
-              <div
-                className="metric-bar-fill gpu"
-                style={{ width: `${Math.round(gpu.load)}%` }}
-              />
+          {collapsed && (
+            <div className="collapsed-values">
+              <span className="collapsed-val">{gpu.temperature}<span className="collapsed-val-unit">°</span></span>
+              <span className="collapsed-val">{Math.round(gpu.load)}<span className="collapsed-val-unit">%</span></span>
             </div>
-          </div>
+          )}
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
         </div>
 
-        <div className="gpu-frequency">
-          <span className="frequency-label">FREQ</span>
-          <span className="frequency-value">
-            {gpu.frequency > 0 ? `${gpu.frequency.toFixed(2)} GHz` : "N/A"}
-          </span>
-        </div>
-
-        <div className="gpu-memory">
-          <span className="memory-label">VRAM</span>
-          <span className="memory-value">
-            {gpu.memoryUsed.toFixed(1)}/{gpu.memoryTotal.toFixed(1)}GB
-          </span>
-          <div className="memory-bar">
-            <div
-              className="memory-bar-fill"
-              style={{
-                width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
-              }}
-            />
+        {collapsed ? (
+          <div className="collapsed-bar">
+            <div className="collapsed-bar-fill gpu" style={{ width: `${Math.round(gpu.load)}%` }} />
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="hud-metrics">
+              <TemperatureGauge
+                value={gpu.temperature}
+                max={gpu.maxTemperature}
+                status={getTemperatureStatus(gpu.temperature, gpu.maxTemperature)}
+                label="TEMP"
+              />
+              <div className="metric-divider" />
+              <div className="metric-item">
+                <span className="metric-label">LOAD</span>
+                <span className="metric-value">{Math.round(gpu.load)}%</span>
+                <div className="metric-bar">
+                  <div
+                    className="metric-bar-fill gpu"
+                    style={{ width: `${Math.round(gpu.load)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="gpu-frequency">
+              <span className="frequency-label">FREQ</span>
+              <span className="frequency-value">
+                {gpu.frequency > 0 ? `${gpu.frequency.toFixed(2)} GHz` : "N/A"}
+              </span>
+            </div>
+
+            <div className="gpu-memory">
+              <span className="memory-label">VRAM</span>
+              <span className="memory-value">
+                {gpu.memoryUsed.toFixed(1)}/{gpu.memoryTotal.toFixed(1)}GB
+              </span>
+              <div className="memory-bar">
+                <div
+                  className="memory-bar-fill"
+                  style={{
+                    width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </>
     );
   };
 
   const renderStorageSection = () => {
     if (!hardwareData.storage || hardwareData.storage.length === 0) return null;
+    const collapsed = collapsedSections.has("storage");
     return (
       <>
-        {hardwareData.storage.map((drive, index) => (
-          <div key={index} className={index > 0 ? "storage-drive-separator" : undefined}>
-            <div className="hud-section-header">
-              <div className="section-indicator storage" />
-              <span className="section-label">SSD</span>
-              <span className="section-name" title={drive.name}>
-                {drive.name}
-              </span>
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("storage")}
+          style={{ cursor: "pointer" }}
+        >
+          <div className="section-indicator storage" />
+          <span className="section-label">SSD</span>
+          <span className="section-name">
+            {hardwareData.storage.length > 1
+              ? `${hardwareData.storage.length} drives`
+              : hardwareData.storage[0].name}
+          </span>
+          {collapsed && (
+            <div className="collapsed-values">
+              {hardwareData.storage.map((drive, i) => (
+                <span key={i} className="collapsed-val">
+                  {drive.temperature > 0 && <>{drive.temperature}<span className="collapsed-val-unit">°</span>{" "}</>}
+                  {Math.round(drive.usedSpace)}<span className="collapsed-val-unit">%</span>
+                </span>
+              ))}
             </div>
+          )}
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
+        </div>
 
-            <div className="hud-metrics">
-              {drive.temperature > 0 ? (
-                <TemperatureGauge
-                  value={drive.temperature}
-                  max={70}
-                  status={getTemperatureStatus(drive.temperature, 70)}
-                  label="TEMP"
-                />
-              ) : (
-                <div className="temp-gauge">
-                  <div className="gauge-content">
-                    <span className="gauge-value unavailable">N/A</span>
-                    <span className="gauge-label">TEMP</span>
-                  </div>
+        {collapsed ? (
+          <div className="collapsed-bar-group">
+            {hardwareData.storage.map((drive, i) => (
+              <div key={i} className="collapsed-bar">
+                <div className="collapsed-bar-fill storage" style={{ width: `${Math.min(drive.usedSpace, 100)}%` }} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          hardwareData.storage.map((drive, index) => (
+            <div key={index} className={index > 0 ? "storage-drive-separator" : undefined}>
+              {hardwareData.storage!.length > 1 && (
+                <div className="storage-drive-name" title={drive.name}>
+                  {drive.name}
                 </div>
               )}
-              <div className="metric-divider" />
-              <div className="metric-item">
-                <span className="metric-label">USED</span>
-                <span className="metric-value">
-                  {drive.usedSpace > 0 ? `${Math.round(drive.usedSpace)}%` : "0%"}
-                </span>
-                <div className="metric-bar">
-                  <div
-                    className="metric-bar-fill storage"
-                    style={{ width: `${Math.min(drive.usedSpace, 100)}%` }}
+
+              <div className="hud-metrics">
+                {drive.temperature > 0 ? (
+                  <TemperatureGauge
+                    value={drive.temperature}
+                    max={70}
+                    status={getTemperatureStatus(drive.temperature, 70)}
+                    label="TEMP"
                   />
+                ) : (
+                  <div className="temp-gauge">
+                    <div className="gauge-content">
+                      <span className="gauge-value unavailable">N/A</span>
+                      <span className="gauge-label">TEMP</span>
+                    </div>
+                  </div>
+                )}
+                <div className="metric-divider" />
+                <div className="metric-item">
+                  <span className="metric-label">USED</span>
+                  <span className="metric-value">
+                    {drive.usedSpace > 0 ? `${Math.round(drive.usedSpace)}%` : "0%"}
+                  </span>
+                  <div className="metric-bar">
+                    <div
+                      className="metric-bar-fill storage"
+                      style={{ width: `${Math.min(drive.usedSpace, 100)}%` }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="storage-capacity-info">
-              <span className="capacity-label">CAPACITY</span>
-              <span className="capacity-value">
-                {drive.totalSpace > 0 ? `${Math.round(drive.totalSpace)}GB` : "N/A"}
-              </span>
+              <div className="storage-capacity-info">
+                <span className="capacity-label">CAPACITY</span>
+                <span className="capacity-value">
+                  {drive.totalSpace > 0 ? `${Math.round(drive.totalSpace)}GB` : "N/A"}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </>
     );
   };
 
   const renderMotherboardSection = () => {
     if (!hardwareData.motherboard) return null;
+    const collapsed = collapsedSections.has("motherboard");
     return (
       <>
-        <div className="hud-section-header">
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("motherboard")}
+          style={{ cursor: "pointer" }}
+        >
           <div className="section-indicator motherboard" />
           <span className="section-label">MB</span>
           <span className="section-name" title={hardwareData.motherboard.name}>
             {hardwareData.motherboard.name}
           </span>
-        </div>
-
-        <div className="hud-metrics">
-          {hardwareData.motherboard.temperature > 0 ? (
-            <TemperatureGauge
-              value={hardwareData.motherboard.temperature}
-              max={80}
-              status={getTemperatureStatus(hardwareData.motherboard.temperature, 80)}
-              label="TEMP"
-            />
-          ) : (
-            <div className="temp-gauge">
-              <div className="gauge-content">
-                <span className="gauge-value unavailable">N/A</span>
-                <span className="gauge-label">TEMP</span>
-              </div>
+          {collapsed && (
+            <div className="collapsed-values">
+              {hardwareData.motherboard.temperature > 0 && (
+                <span className="collapsed-val">{Math.round(hardwareData.motherboard.temperature)}<span className="collapsed-val-unit">°</span></span>
+              )}
+              {hardwareData.motherboard.fans.length > 0 && (
+                <span className="collapsed-val">{hardwareData.motherboard.fans[0].speed}<span className="collapsed-val-unit">RPM</span></span>
+              )}
             </div>
           )}
-          <div className="metric-divider" />
-          <div className="metric-item fan-metrics">
-            <span className="metric-label">FAN</span>
-            {hardwareData.motherboard.fans.length > 0 ? (
-              <div className="fan-speeds">
-                {hardwareData.motherboard.fans.slice(0, 3).map((fan, idx) => (
-                  <div key={idx} className="fan-speed-item" title={fan.name}>
-                    <span className="fan-speed-value">{fan.speed}</span>
-                    <span className="fan-speed-unit">RPM</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <span className="metric-value unavailable">N/A</span>
-            )}
-          </div>
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
         </div>
+
+        {!collapsed && (
+          <div className="hud-metrics">
+            {hardwareData.motherboard.temperature > 0 ? (
+              <TemperatureGauge
+                value={hardwareData.motherboard.temperature}
+                max={80}
+                status={getTemperatureStatus(hardwareData.motherboard.temperature, 80)}
+                label="TEMP"
+              />
+            ) : (
+              <div className="temp-gauge">
+                <div className="gauge-content">
+                  <span className="gauge-value unavailable">N/A</span>
+                  <span className="gauge-label">TEMP</span>
+                </div>
+              </div>
+            )}
+            <div className="metric-divider" />
+            <div className="metric-item fan-metrics">
+              <span className="metric-label">FAN</span>
+              {hardwareData.motherboard.fans.length > 0 ? (
+                <div className="fan-speeds">
+                  {hardwareData.motherboard.fans.slice(0, 3).map((fan, idx) => (
+                    <div key={idx} className="fan-speed-item" title={fan.name}>
+                      <span className="fan-speed-value">{fan.speed}</span>
+                      <span className="fan-speed-unit">RPM</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="metric-value unavailable">N/A</span>
+              )}
+            </div>
+          </div>
+        )}
       </>
     );
   };
