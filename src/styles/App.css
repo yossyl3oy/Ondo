@@ -34,6 +34,17 @@
   border-width: 0 0 2px 2px;
 }
 
+/* Mini mode: hide container background, border, and decorations */
+.app-container.mini {
+  background: transparent;
+  border-left: none;
+}
+
+.app-container.mini::before,
+.app-container.mini::after {
+  display: none;
+}
+
 /* Drag region */
 .drag-region {
   -webkit-app-region: drag;

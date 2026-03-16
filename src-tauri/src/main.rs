@@ -8,6 +8,7 @@ mod hardware;
 mod log_buffer;
 mod settings;
 mod tray;
+mod window_monitor;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -489,6 +490,26 @@ async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<
 }
 
 #[tauri::command]
+async fn set_window_min_size(
+    app: AppHandle,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let min_size = match (width, height) {
+            (Some(w), Some(h)) => Some(tauri::PhysicalSize::new(w, h)),
+            _ => None,
+        };
+        window.set_min_size(min_size).map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "set_window_min_size");
+            err
+        })?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_audio_devices() -> Result<Vec<audio::AudioDevice>, String> {
     audio::get_audio_devices()
 }
@@ -528,6 +549,9 @@ fn main() {
             // Start debug HTTP server (http://0.0.0.0:19210)
             tauri::async_runtime::spawn(debug_server::start_debug_server());
 
+            // Start window monitor for mini mode (detects maximized foreground windows)
+            window_monitor::start_monitoring(app.handle().clone());
+
             // Position window on startup
             if let Some(window) = app.get_webview_window("main") {
                 // Restore saved window state if available
@@ -559,6 +583,7 @@ fn main() {
             set_auto_start,
             get_window_state,
             restore_window_state,
+            set_window_min_size,
             check_pawnio_status,
             download_and_install_pawnio,
             get_audio_devices,

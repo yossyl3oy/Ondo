@@ -32,6 +32,7 @@ interface HudWidgetProps {
   audioDevices: AudioDevice[];
   onSwitchAudioDevice: (deviceId: string) => void;
   audioSwitching?: boolean;
+  miniMode?: boolean;
 }
 
 export function HudWidget({
@@ -47,6 +48,7 @@ export function HudWidget({
   audioDevices,
   onSwitchAudioDevice,
   audioSwitching,
+  miniMode,
 }: HudWidgetProps) {
   const [showCores, setShowCores] = useState(false);
   const [version, setVersion] = useState("1.0.0");
@@ -637,6 +639,75 @@ export function HudWidget({
     audio: renderAudioSection,
   };
 
+  // ── Mini mode: compact 1-line per section ──────────────────────────────
+  const renderMiniRow = (
+    type: SectionType,
+    label: string,
+    temp: number | null,
+    usage: number,
+    barClass?: string,
+  ) => (
+    <div key={type} className={`mini-row ${type}`}>
+      <div className={`section-indicator ${type}`} />
+      <span className="mini-label">{label}</span>
+      <span className="mini-temp">
+        {temp !== null && temp > 0 ? <>{Math.round(temp)}<span className="mini-unit">°</span></> : "—"}
+      </span>
+      <span className="mini-divider">|</span>
+      <div className="mini-bar">
+        <div
+          className={`mini-bar-fill${barClass ? ` ${barClass}` : ""}`}
+          style={{ width: `${Math.min(Math.round(usage), 100)}%` }}
+        />
+      </div>
+      <span className="mini-usage">{Math.round(usage)}<span className="mini-unit">%</span></span>
+    </div>
+  );
+
+  const renderMiniContent = () => {
+    const rows: React.ReactNode[] = [];
+
+    for (const type of sectionOrder) {
+      if (hiddenSections.includes(type)) continue;
+
+      switch (type) {
+        case "cpu":
+          if (cpu) rows.push(renderMiniRow("cpu", "CPU", cpu.temperature, cpu.load));
+          break;
+        case "gpu":
+          if (gpu) rows.push(renderMiniRow("gpu", "GPU", gpu.temperature, gpu.load, "gpu"));
+          break;
+        case "storage":
+          if (hardwareData.storage && hardwareData.storage.length > 0) {
+            for (const drive of hardwareData.storage) {
+              rows.push(renderMiniRow("storage", "SSD", drive.temperature, drive.usedSpace, "storage"));
+            }
+          }
+          break;
+        case "motherboard":
+          if (hardwareData.motherboard) {
+            rows.push(renderMiniRow("motherboard", "MB", hardwareData.motherboard.temperature, 0));
+          }
+          break;
+        // audio is omitted in mini mode
+      }
+    }
+
+    return rows;
+  };
+
+  // ── Mini mode render ───────────────────────────────────────────────────
+  if (miniMode) {
+    return (
+      <div className="hud-widget mini">
+        <div className="mini-content">
+          {renderMiniContent()}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Normal mode render ─────────────────────────────────────────────────
   return (
     <div className="hud-widget">
       {/* Drag region - separate from header */}

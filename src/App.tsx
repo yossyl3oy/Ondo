@@ -19,6 +19,8 @@ function App() {
   const [showRestorePanel, setShowRestorePanel] = useState(false);
   const [showUpdateNotification, setShowUpdateNotification] = useState(true);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [miniMode, setMiniMode] = useState(false);
+  const savedWindowStateRef = useRef<WindowState | null>(null);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
   const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
@@ -55,6 +57,61 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  // Listen for minimode-changed events from window monitor
+  useEffect(() => {
+    const unlisten = listen<{ active: boolean }>("minimode-changed", async (event) => {
+      const active = event.payload.active;
+      setMiniMode(active);
+
+      try {
+        if (active) {
+          // Save current window state before shrinking
+          const currentState = await invoke<WindowState>("get_window_state");
+          savedWindowStateRef.current = currentState;
+
+          // Remove min size constraint so window can shrink below 350px
+          await invoke("set_window_min_size", { width: null, height: null });
+
+          // Wait a frame for React to render mini content, then fit window to it
+          requestAnimationFrame(async () => {
+            const miniEl = document.querySelector(".mini-content");
+            const cssHeight = miniEl
+              ? miniEl.getBoundingClientRect().height + 4
+              : 120;
+            const dpr = window.devicePixelRatio || 1;
+            const physicalHeight = Math.round(cssHeight * dpr);
+            await invoke("restore_window_state", {
+              state: {
+                x: currentState.x,
+                y: currentState.y,
+                width: currentState.width,
+                height: physicalHeight,
+              },
+            });
+            // Reposition to settings position
+            await invoke("set_window_position", { position: settings.position });
+          });
+        } else if (savedWindowStateRef.current) {
+          // Restore min size constraint
+          const dpr = window.devicePixelRatio || 1;
+          await invoke("set_window_min_size", {
+            width: Math.round(180 * dpr),
+            height: Math.round(350 * dpr),
+          });
+          // Restore saved window state
+          await invoke("restore_window_state", { state: savedWindowStateRef.current });
+          savedWindowStateRef.current = null;
+        }
+      } catch {
+        // Ignore errors during window resize
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [settings.position]);
 
   // Apply theme to document root
   useEffect(() => {
@@ -138,10 +195,10 @@ function App() {
 
   return (
     <div
-      className="app-container"
+      className={`app-container${miniMode ? " mini" : ""}`}
       style={{ opacity: settings.opacity / 100 }}
     >
-      <div className="scanlines" />
+      {!miniMode && <div className="scanlines" />}
       <HudWidget
         hardwareData={hardwareData}
         isLoading={isLoading}
@@ -155,6 +212,7 @@ function App() {
         audioDevices={audioDevices}
         onSwitchAudioDevice={switchAudioDevice}
         audioSwitching={audioSwitching}
+        miniMode={miniMode}
       />
       {showSettings && (
         <SettingsPanel
