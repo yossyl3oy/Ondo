@@ -62,7 +62,11 @@ pub fn start_monitoring(app: AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn is_foreground_maximized(app: &AppHandle) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsZoomed};
+    use windows::Win32::Graphics::Gdi::MonitorFromWindow;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowRect, IsZoomed,
+    };
 
     unsafe {
         let fg = GetForegroundWindow();
@@ -79,7 +83,30 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             }
         }
 
-        IsZoomed(fg).as_bool()
+        // Check Win32 maximized state first
+        if IsZoomed(fg).as_bool() {
+            return true;
+        }
+
+        // Also detect fullscreen windows (e.g. video players) by checking if
+        // the window covers the entire monitor
+        let mut win_rect = std::mem::zeroed();
+        if GetWindowRect(fg, &mut win_rect).is_err() {
+            return false;
+        }
+
+        let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if !GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            return false;
+        }
+
+        let scr = mi.rcMonitor;
+        win_rect.left <= scr.left
+            && win_rect.top <= scr.top
+            && win_rect.right >= scr.right
+            && win_rect.bottom >= scr.bottom
     }
 }
 
