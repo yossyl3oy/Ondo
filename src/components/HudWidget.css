@@ -103,6 +103,12 @@
   flex: 1;
   overflow-y: auto;
   padding-right: 4px;
+  position: relative;
+  z-index: 10;
+}
+
+.hud-content.dragging {
+  overflow: visible;
 }
 
 /* Loading & Error states */
@@ -163,11 +169,84 @@
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 12px var(--hud-glow);
   border-color: var(--hud-accent);
   opacity: 0.95;
+  transition: opacity 0.2s ease;
+}
+
+.hud-section.dragging.near-trash {
+  opacity: 0.3;
 }
 
 .hud-section.shrink {
   scale: 0.95;
   opacity: 0.6;
+}
+
+/* Trash zone - fixed at bottom, below dragged sections */
+.trash-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+  border: 1px dashed var(--hud-border);
+  border-radius: 4px;
+  color: var(--hud-text-secondary);
+  opacity: 0.6;
+  transition: all 0.2s ease;
+  animation: trashFadeIn 0.2s ease;
+  z-index: 5;
+  position: relative;
+}
+
+.trash-zone.active {
+  border-color: var(--hud-danger, #ff4444);
+  background: rgba(255, 68, 68, 0.1);
+  color: var(--hud-danger, #ff4444);
+  opacity: 1;
+  box-shadow: 0 0 12px rgba(255, 68, 68, 0.2);
+}
+
+@keyframes trashFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 0.6;
+    transform: translateY(0);
+  }
+}
+
+/* Header buttons */
+.hud-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Restore button */
+.hud-restore-btn {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--hud-accent);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 100;
+}
+
+.hud-restore-btn:hover {
+  color: var(--hud-primary);
+  border-color: var(--hud-border);
+  background: var(--hud-surface);
 }
 
 .storage-drive-separator {
@@ -221,6 +300,69 @@
 .section-indicator.motherboard {
   background: #9b59b6;
   box-shadow: 0 0 8px #9b59b6;
+}
+
+.section-indicator.audio {
+  background: #1abc9c;
+  box-shadow: 0 0 8px #1abc9c;
+}
+
+/* Audio section styles */
+.audio-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.audio-device-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hud-border);
+  color: var(--hud-primary);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='%2300d4ff'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.audio-device-select:hover {
+  border-color: var(--hud-accent);
+}
+
+.audio-device-select:focus {
+  border-color: var(--hud-accent);
+  box-shadow: 0 0 6px rgba(0, 212, 255, 0.3);
+}
+
+.audio-device-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.audio-device-select option {
+  background: #1a1a2e;
+  color: var(--hud-primary);
+}
+
+.audio-switching-indicator {
+  color: var(--hud-accent);
+  font-size: 14px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes indicatorPulse {

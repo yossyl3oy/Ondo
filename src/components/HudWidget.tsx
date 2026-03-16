@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { useEffect } from "react";
-import type { HardwareData, SectionType } from "../types";
+import type { HardwareData, SectionType, AudioDevice } from "../types";
 import { TemperatureGauge } from "./TemperatureGauge";
 import { CpuCoreGrid } from "./CpuCoreGrid";
 import "./HudWidget.css";
@@ -24,8 +24,14 @@ interface HudWidgetProps {
   isLoading: boolean;
   error: string | null;
   onSettingsClick: () => void;
+  onRestoreClick: () => void;
   sectionOrder: SectionType[];
   onSectionOrderChange: (order: SectionType[]) => void;
+  hiddenSections: SectionType[];
+  onHiddenSectionsChange: (hidden: SectionType[]) => void;
+  audioDevices: AudioDevice[];
+  onSwitchAudioDevice: (deviceId: string) => void;
+  audioSwitching?: boolean;
 }
 
 export function HudWidget({
@@ -33,16 +39,24 @@ export function HudWidget({
   isLoading,
   error,
   onSettingsClick,
+  onRestoreClick,
   sectionOrder,
   onSectionOrderChange,
+  hiddenSections,
+  onHiddenSectionsChange,
+  audioDevices,
+  onSwitchAudioDevice,
+  audioSwitching,
 }: HudWidgetProps) {
   const [showCores, setShowCores] = useState(false);
   const [version, setVersion] = useState("1.0.0");
   const [isDragging, setIsDragging] = useState(false);
   const [draggedType, setDraggedType] = useState<SectionType | null>(null);
+  const [isOverTrash, setIsOverTrash] = useState(false);
   const [visualOrder, setVisualOrder] = useState<SectionType[]>(sectionOrder);
   const dragRef = useRef<DragInfo | null>(null);
   const sectionRefs = useRef<Map<SectionType, HTMLDivElement>>(new Map());
+  const trashZoneRef = useRef<HTMLDivElement | null>(null);
   const { cpu, gpu } = hardwareData;
 
   // Keep visualOrder in sync with sectionOrder when not dragging
@@ -70,9 +84,10 @@ export function HudWidget({
     return "normal";
   };
 
-  // Visible sections (those with data)
+  // Visible sections (those with data and not hidden)
   const getVisibleSections = useCallback(() => {
     return sectionOrder.filter((type) => {
+      if (hiddenSections.includes(type)) return false;
       switch (type) {
         case "cpu": return !!cpu;
         case "gpu": return !!gpu;
@@ -81,7 +96,7 @@ export function HudWidget({
         default: return false;
       }
     });
-  }, [sectionOrder, cpu, gpu, hardwareData.storage, hardwareData.motherboard]);
+  }, [sectionOrder, hiddenSections, cpu, gpu, hardwareData.storage, hardwareData.motherboard]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent, sectionType: SectionType) => {
     // Don't start drag on interactive elements
@@ -178,6 +193,13 @@ export function HudWidget({
 
     // Update visual order for the drop
     setVisualOrder(newOrder);
+
+    // Check if over trash zone
+    const trashEl = trashZoneRef.current;
+    if (trashEl) {
+      const trashRect = trashEl.getBoundingClientRect();
+      setIsOverTrash(e.clientY >= trashRect.top && e.clientY <= trashRect.bottom);
+    }
   }, []);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -187,8 +209,6 @@ export function HudWidget({
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
 
     if (drag.isDragging) {
-      const finalOrder = [...visualOrder];
-
       // Clear all inline styles immediately
       for (const type of drag.currentOrder) {
         const el = sectionRefs.current.get(type);
@@ -199,30 +219,45 @@ export function HudWidget({
         }
       }
 
-      // Build the full order (including invisible sections)
-      const result: SectionType[] = [];
-      let visibleIdx = 0;
-      for (const type of sectionOrder) {
-        if (finalOrder.includes(type)) {
-          result.push(finalOrder[visibleIdx++]);
-        } else {
-          result.push(type);
-        }
-      }
+      // Check if dropped on trash zone
+      if (isOverTrash) {
+        const newHidden = [...hiddenSections, drag.sectionType];
+        flushSync(() => {
+          onHiddenSectionsChange(newHidden);
+          setIsDragging(false);
+          setDraggedType(null);
+          setIsOverTrash(false);
+        });
+      } else {
+        const finalOrder = [...visualOrder];
 
-      // Use flushSync so React re-renders in the same frame as style clearing
-      flushSync(() => {
-        onSectionOrderChange(result);
-        setIsDragging(false);
-        setDraggedType(null);
-      });
+        // Build the full order (including invisible sections)
+        const result: SectionType[] = [];
+        let visibleIdx = 0;
+        for (const type of sectionOrder) {
+          if (finalOrder.includes(type)) {
+            result.push(finalOrder[visibleIdx++]);
+          } else {
+            result.push(type);
+          }
+        }
+
+        // Use flushSync so React re-renders in the same frame as style clearing
+        flushSync(() => {
+          onSectionOrderChange(result);
+          setIsDragging(false);
+          setDraggedType(null);
+          setIsOverTrash(false);
+        });
+      }
     } else {
       setIsDragging(false);
       setDraggedType(null);
+      setIsOverTrash(false);
     }
 
     dragRef.current = null;
-  }, [visualOrder, sectionOrder, onSectionOrderChange]);
+  }, [visualOrder, sectionOrder, hiddenSections, isOverTrash, onSectionOrderChange, onHiddenSectionsChange]);
 
   const setSectionRef = useCallback((type: SectionType, el: HTMLDivElement | null) => {
     if (el) {
@@ -448,11 +483,50 @@ export function HudWidget({
     );
   };
 
+  const renderAudioSection = () => {
+    const defaultDevice = audioDevices.find((d) => d.is_default);
+    return (
+      <>
+        <div className="hud-section-header">
+          <div className="section-indicator audio" />
+          <span className="section-label">AUDIO</span>
+          <span className="section-name" title={defaultDevice?.name ?? "No device"}>
+            {defaultDevice?.name ?? "No device"}
+          </span>
+        </div>
+        <div className="hud-metrics">
+          <div className="audio-select-wrapper">
+            <select
+              className="audio-device-select"
+              value={defaultDevice?.id ?? ""}
+              onChange={(e) => onSwitchAudioDevice(e.target.value)}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={audioSwitching || audioDevices.length === 0}
+            >
+              {audioDevices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+              {audioDevices.length === 0 && (
+                <option value="">No devices found</option>
+              )}
+            </select>
+            {audioSwitching && (
+              <span className="audio-switching-indicator">⟳</span>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  };
+
   const sectionRenderers: Record<SectionType, () => React.ReactNode> = {
     cpu: renderCpuSection,
     gpu: renderGpuSection,
     storage: renderStorageSection,
     motherboard: renderMotherboardSection,
+    audio: renderAudioSection,
   };
 
   return (
@@ -467,19 +541,32 @@ export function HudWidget({
           <span className="hud-title-text">ONDO</span>
           <span className="hud-title-version">v{version}</span>
         </div>
-        <button
-          className="hud-settings-btn"
-          onClick={onSettingsClick}
-          title="Settings"
-        >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-            <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
-          </svg>
-        </button>
+        <div className="hud-header-buttons">
+          {hiddenSections.length > 0 && (
+            <button
+              className="hud-restore-btn"
+              onClick={onRestoreClick}
+              title="Restore hidden sections"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+              </svg>
+            </button>
+          )}
+          <button
+            className="hud-settings-btn"
+            onClick={onSettingsClick}
+            title="Settings"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Main content */}
-      <div className="hud-content">
+      <div className={`hud-content${isDragging ? " dragging" : ""}`}>
         {isLoading && !cpu && !gpu ? (
           <div className="hud-loading">
             <div className="loading-spinner" />
@@ -493,13 +580,14 @@ export function HudWidget({
         ) : (
           <>
             {sectionOrder.map((sectionType) => {
+              if (hiddenSections.includes(sectionType)) return null;
               const content = sectionRenderers[sectionType]();
               if (!content) return null;
               return (
                 <div
                   key={sectionType}
                   ref={(el) => setSectionRef(sectionType, el)}
-                  className={`hud-section${draggedType === sectionType ? " dragging" : ""}${isDragging && draggedType !== sectionType ? " shrink" : ""}`}
+                  className={`hud-section${draggedType === sectionType ? ` dragging${isOverTrash ? " near-trash" : ""}` : ""}${isDragging && draggedType !== sectionType ? " shrink" : ""}`}
                   onPointerDown={(e) => handlePointerDown(e, sectionType)}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
@@ -511,6 +599,18 @@ export function HudWidget({
           </>
         )}
       </div>
+
+      {/* Trash zone - fixed at bottom during drag */}
+      {isDragging && (
+        <div
+          ref={trashZoneRef}
+          className={`trash-zone${isOverTrash ? " active" : ""}`}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+          </svg>
+        </div>
+      )}
 
       {/* Footer status */}
       <div className="hud-footer">

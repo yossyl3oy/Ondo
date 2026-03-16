@@ -71,6 +71,7 @@ export interface AppSettings {
   theme: "auto" | "dark" | "light";
   compactMode: boolean;
   sectionOrder: SectionType[];
+  hiddenSections: SectionType[];
   windowState?: WindowState;
 }
 
@@ -84,10 +85,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,
-  sectionOrder: ["cpu", "gpu", "storage", "motherboard"],
+  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "audio"],
+  hiddenSections: [],
 };
 
-export type SectionType = "cpu" | "gpu" | "storage" | "motherboard";
+export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio";
+
+export interface AudioDevice {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
 
 export interface PawnIOStatus {
   installed: boolean;

@@ -1,0 +1,49 @@
+/* RestorePanel reuses settings-overlay and settings-panel classes from SettingsPanel.css */
+
+.restore-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.restore-item:last-child {
+  border-bottom: none;
+}
+
+.restore-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.restore-item-info .section-indicator {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.restore-item-label {
+  font-size: 11px;
+  color: var(--hud-primary);
+  letter-spacing: 1px;
+}
+
+.restore-item-btn {
+  background: transparent;
+  border: 1px solid var(--hud-accent);
+  color: var(--hud-accent);
+  font-size: 10px;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.5px;
+}
+
+.restore-item-btn:hover {
+  background: var(--hud-accent);
+  color: var(--hud-bg, #0a0a0a);
+}

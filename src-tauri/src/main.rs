@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod debug_server;
 mod error_reporting;
 mod hardware;
@@ -497,6 +498,16 @@ async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<
     Ok(())
 }
 
+#[tauri::command]
+async fn get_audio_devices() -> Result<Vec<audio::AudioDevice>, String> {
+    audio::get_audio_devices()
+}
+
+#[tauri::command]
+async fn set_default_audio_device(device_id: String) -> Result<(), String> {
+    audio::set_default_audio_device(&device_id)
+}
+
 fn main() {
     // Capture all `log` crate output (including Tauri internals) into the debug server buffer
     log_buffer::init_logger();
@@ -560,6 +571,8 @@ fn main() {
             restore_window_state,
             check_pawnio_status,
             download_and_install_pawnio,
+            get_audio_devices,
+            set_default_audio_device,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
