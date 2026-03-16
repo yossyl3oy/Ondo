@@ -287,19 +287,7 @@ mod platform {
                     Ok(store) => {
                         match store.GetValue(&PKEY_Device_FriendlyName) {
                             Ok(prop) => {
-                                let pwsz = prop.Anonymous.Anonymous.Anonymous.pwszVal;
-                                if !pwsz.is_null() {
-                                    let wide: &[u16] = {
-                                        let mut len = 0;
-                                        while *pwsz.add(len) != 0 {
-                                            len += 1;
-                                        }
-                                        std::slice::from_raw_parts(pwsz, len)
-                                    };
-                                    String::from_utf16_lossy(wide)
-                                } else {
-                                    format!("Audio Device {}", i)
-                                }
+                                prop.to_string().trim().to_string()
                             }
                             Err(_) => format!("Audio Device {}", i),
                         }
