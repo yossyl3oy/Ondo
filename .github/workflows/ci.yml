@@ -1,9 +1,15 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
+
+permissions:
+  contents: write
 
 jobs:
   check:
@@ -51,3 +57,86 @@ jobs:
       - name: Cargo check
         run: cargo check
         working-directory: src-tauri
+
+  bump-lhm-pr-version:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find open LHM update PRs
+        id: find-pr
+        run: |
+          PR_JSON=$(gh pr list --search "chore: update LibreHardwareMonitorLib" --state open --json number,headRefName -q '.[0]')
+          if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "null" ]; then
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "No open LHM update PR found"
+          else
+            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
+            PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+            echo "Found PR #$PR_NUMBER on branch $PR_BRANCH"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        if: steps.find-pr.outputs.found == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '25.2.1'
+
+      - name: Checkout PR branch
+        if: steps.find-pr.outputs.found == 'true'
+        run: |
+          git fetch origin ${{ steps.find-pr.outputs.branch }}
+          git checkout ${{ steps.find-pr.outputs.branch }}
+          git rebase origin/main
+
+      - name: Bump app version
+        if: steps.find-pr.outputs.found == 'true'
+        run: |
+          CURRENT_APP_VERSION=$(node -p "require('./package.json').version")
+          echo "Current app version: $CURRENT_APP_VERSION"
+
+          # Increment the prerelease number (e.g., 0.1.0-beta.13 → 0.1.0-beta.14)
+          NEW_APP_VERSION=$(node -e "
+            const v = '$CURRENT_APP_VERSION';
+            const match = v.match(/^(.+\.)(\d+)$/);
+            if (match) {
+              console.log(match[1] + (parseInt(match[2]) + 1));
+            } else {
+              console.log(v + '.1');
+            }
+          ")
+          echo "New app version: $NEW_APP_VERSION"
+
+          # Update package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '$NEW_APP_VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # Sync to Cargo.toml and tauri.conf.json
+          node scripts/sync-version.cjs
+
+      - name: Push version bump
+        if: steps.find-pr.outputs.found == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          # Only commit if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: bump app version"
+            git push origin ${{ steps.find-pr.outputs.branch }} --force-with-lease
+            echo "Version bump pushed"
+          else
+            echo "No version changes needed"
+          fi

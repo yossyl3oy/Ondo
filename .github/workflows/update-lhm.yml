@@ -62,38 +62,6 @@ jobs:
         run: |
           sed -i 's|Version="${{ steps.current.outputs.version }}"|Version="${{ steps.latest.outputs.version }}"|' src-lhm/OndoHardwareMonitor.csproj
 
-      - name: Bump app version (patch)
-        if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
-        run: |
-          CURRENT_APP_VERSION=$(node -p "require('./package.json').version")
-          echo "Current app version: $CURRENT_APP_VERSION"
-
-          # Increment the prerelease number (e.g., 0.1.0-beta.13 → 0.1.0-beta.14)
-          NEW_APP_VERSION=$(node -e "
-            const v = '$CURRENT_APP_VERSION';
-            const match = v.match(/^(.+\.)(\d+)$/);
-            if (match) {
-              console.log(match[1] + (parseInt(match[2]) + 1));
-            } else {
-              // Fallback: append .1
-              console.log(v + '.1');
-            }
-          ")
-          echo "New app version: $NEW_APP_VERSION"
-
-          # Update package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_APP_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-          # Sync to Cargo.toml and tauri.conf.json
-          node scripts/sync-version.cjs
-
-          echo "new_app_version=$NEW_APP_VERSION" >> $GITHUB_ENV
-
       - name: Create Pull Request
         if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
         run: |
@@ -107,18 +75,14 @@ jobs:
 
           gh pr create \
             --title "chore: update LibreHardwareMonitorLib to ${{ steps.latest.outputs.version }}" \
-            --body "$(cat <<'EOF'
+            --body "$(cat <<EOF
           ## Summary
-          - Update LibreHardwareMonitorLib from `${{ steps.current.outputs.version }}` to `${{ steps.latest.outputs.version }}`
-          - Bump app version to `${{ env.new_app_version }}`
+          - Update LibreHardwareMonitorLib from \`${{ steps.current.outputs.version }}\` to \`${{ steps.latest.outputs.version }}\`
 
           ## Changes
-          - `src-lhm/OndoHardwareMonitor.csproj` - NuGet package version update
-          - `package.json` - App version bump
-          - `src-tauri/Cargo.toml` - Version sync
-          - `src-tauri/tauri.conf.json` - Version sync
+          - \`src-lhm/OndoHardwareMonitor.csproj\` - NuGet package version update
 
-          > This PR was automatically generated
+          > This PR was automatically generated. Version bump will be added by CI on main push.
           EOF
           )" \
             --base main \
