@@ -462,7 +462,7 @@ async fn get_window_state(app: AppHandle) -> Result<WindowStateData, String> {
             error_reporting::capture_window_error(&err, "get_window_state_position");
             err
         })?;
-        let size = window.outer_size().map_err(|e| {
+        let size = window.inner_size().map_err(|e| {
             let err = e.to_string();
             error_reporting::capture_window_error(&err, "get_window_state_size");
             err
