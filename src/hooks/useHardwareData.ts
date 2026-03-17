@@ -28,10 +28,27 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
     invoke: false,
     nullData: false,
   });
+  // ネットワーク速度の平滑化用EMA (インターフェース名 → { dl, ul })
+  const networkEmaRef = useRef<Map<string, { dl: number; ul: number }>>(new Map());
 
   const fetchData = useCallback(async () => {
     try {
       const data = await invoke<HardwareData>("get_hardware_data");
+
+      // ネットワーク速度をEMAで平滑化
+      if (data.network) {
+        const alpha = 0.3;
+        const ema = networkEmaRef.current;
+        for (const iface of data.network) {
+          const prev = ema.get(iface.name);
+          if (prev) {
+            iface.receivedPerSec = alpha * iface.receivedPerSec + (1 - alpha) * prev.dl;
+            iface.sentPerSec = alpha * iface.sentPerSec + (1 - alpha) * prev.ul;
+          }
+          ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
+        }
+      }
+
       setHardwareData(data);
       setError(null);
 
@@ -64,7 +81,20 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
 
       // Use mock data in development for testing UI
       if (import.meta.env.DEV) {
-        setHardwareData(generateMockData());
+        const mockData = generateMockData();
+        if (mockData.network) {
+          const alpha = 0.3;
+          const ema = networkEmaRef.current;
+          for (const iface of mockData.network) {
+            const prev = ema.get(iface.name);
+            if (prev) {
+              iface.receivedPerSec = alpha * iface.receivedPerSec + (1 - alpha) * prev.dl;
+              iface.sentPerSec = alpha * iface.sentPerSec + (1 - alpha) * prev.ul;
+            }
+            ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
+          }
+        }
+        setHardwareData(mockData);
       }
     } finally {
       setIsLoading(false);

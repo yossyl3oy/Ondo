@@ -342,12 +342,14 @@ export function HudWidget({
               </div>
             </div>
 
-            <div className="cpu-frequency">
-              <span className="frequency-label">FREQ</span>
-              <span className="frequency-value">
-                {cpu.frequency > 0 ? `${cpu.frequency.toFixed(2)} GHz` : "N/A"}
-              </span>
-            </div>
+            {cpu.frequency > 0 && (
+              <div className="cpu-frequency">
+                <span className="frequency-label">FREQ</span>
+                <span className="frequency-value">
+                  {cpu.frequency.toFixed(2)} GHz
+                </span>
+              </div>
+            )}
 
             {showCores && cpu.cores && cpu.cores.length > 0 && (
               <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
@@ -417,27 +419,35 @@ export function HudWidget({
               </div>
             </div>
 
-            <div className="gpu-frequency">
-              <span className="frequency-label">FREQ</span>
-              <span className="frequency-value">
-                {gpu.frequency > 0 ? `${gpu.frequency.toFixed(2)} GHz` : "N/A"}
-              </span>
-            </div>
-
-            <div className="gpu-memory">
-              <span className="memory-label">VRAM</span>
-              <span className="memory-value">
-                {gpu.memoryUsed.toFixed(1)}/{gpu.memoryTotal.toFixed(1)}GB
-              </span>
-              <div className="memory-bar">
-                <div
-                  className="memory-bar-fill"
-                  style={{
-                    width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
-                  }}
-                />
+            {gpu.frequency > 0 && (
+              <div className="gpu-frequency">
+                <span className="frequency-label">FREQ</span>
+                <span className="frequency-value">
+                  {gpu.frequency.toFixed(2)} GHz
+                </span>
               </div>
-            </div>
+            )}
+
+            {gpu.memoryTotal > 0 && (
+              <div className="gpu-memory">
+                <span className="memory-label">{gpu.memoryUsed > 0 ? "VRAM" : "MEM"}</span>
+                <span className="memory-value">
+                  {gpu.memoryUsed > 0
+                    ? `${gpu.memoryUsed.toFixed(1)}/${gpu.memoryTotal.toFixed(1)}GB`
+                    : `${gpu.memoryTotal.toFixed(0)}GB Unified`}
+                </span>
+                {gpu.memoryUsed > 0 && (
+                  <div className="memory-bar">
+                    <div
+                      className="memory-bar-fill"
+                      style={{
+                        width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </>
@@ -781,7 +791,7 @@ export function HudWidget({
             rows.push(
               <div key="network" className="mini-row network">
                 <div className="section-indicator network" />
-                <span className="mini-label">NETWORK</span>
+                <span className="mini-label">NET</span>
                 <span className="mini-net-speed"><span className="mini-unit">▼</span>{formatSpeed(totalDl)}</span>
                 <span className="mini-divider">|</span>
                 <span className="mini-net-speed"><span className="mini-unit">▲</span>{formatSpeed(totalUl)}</span>

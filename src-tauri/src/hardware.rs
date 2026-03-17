@@ -488,6 +488,11 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
             continue;
         }
 
+        // Filter out inactive interfaces (no traffic since boot)
+        if data.total_received() == 0 && data.total_transmitted() == 0 {
+            continue;
+        }
+
         let received = data.received();
         let transmitted = data.transmitted();
 
@@ -751,7 +756,11 @@ fn init_macos_monitor() -> MacOsMonitor {
         crate::log_debug!("macOS", "Temperature sensor: {} = {}°C", comp.label(), comp.temperature());
     }
 
-    let (gpu_name, gpu_memory_total) = get_macos_gpu_info();
+    let (gpu_name, mut gpu_memory_total) = get_macos_gpu_info();
+    // Apple Silicon uses unified memory — use total system memory as GPU memory
+    if gpu_memory_total <= 0.0 {
+        gpu_memory_total = get_macos_system_memory_gb();
+    }
     let model_name = get_macos_model_name();
 
     crate::log_info!("macOS", "GPU: {} ({:.1} GB)", gpu_name, gpu_memory_total);
@@ -787,10 +796,12 @@ fn classify_temperature(label: &str) -> TempKind {
     // CPU-related sensors
     // Intel: "TC0P" (CPU proximity), "TC0D" (CPU die), "TC0E", "TC0F"
     // Apple Silicon: "Tp01"-"Tp0T" (CPU cluster temps), "SOC MTR Temp"
+    // Apple Silicon (M4+): "PMU tdie*" (SoC die temperature sensors)
     if l.contains("cpu") || l.contains("processor")
         || l.starts_with("tc0") || l.starts_with("tc1")
         || (l.starts_with("tp") && l.len() <= 6)
         || l.contains("soc mtr temp") || l.contains("pcore") || l.contains("ecore")
+        || (l.starts_with("pmu") && l.contains("tdie"))
     {
         TempKind::Cpu
     }
@@ -877,7 +888,10 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         let cpu_load = monitor.system.global_cpu_usage();
         let cpu_freq = if !cpus.is_empty() {
             let total_freq: u64 = cpus.iter().map(|c| c.frequency()).sum();
-            (total_freq as f32 / cpus.len() as f32) / 1000.0 // MHz to GHz
+            let freq_ghz = (total_freq as f32 / cpus.len() as f32) / 1000.0; // MHz to GHz
+            // sysinfo returns unreliable frequency on Apple Silicon (e.g. 0.004 GHz)
+            // Treat values < 0.1 GHz as unavailable
+            if freq_ghz < 0.1 { 0.0 } else { freq_ghz }
         } else {
             0.0
         };
@@ -911,14 +925,16 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         };
 
         // GPU data
-        let gpu = if gpu_temp > 0.0 || !monitor.gpu_name.is_empty() {
+        // On Apple Silicon, CPU and GPU share the same die — use die temp as fallback
+        let effective_gpu_temp = if gpu_temp > 0.0 { gpu_temp } else { cpu_temp };
+        let gpu = if effective_gpu_temp > 0.0 || !monitor.gpu_name.is_empty() {
             Some(GpuData {
                 name: if monitor.gpu_name.is_empty() {
                     "Integrated GPU".to_string()
                 } else {
                     monitor.gpu_name.clone()
                 },
-                temperature: gpu_temp,
+                temperature: effective_gpu_temp,
                 max_temperature: 100.0,
                 load: 0.0, // Not available through sysinfo on macOS
                 frequency: 0.0,
@@ -1051,6 +1067,29 @@ fn get_macos_gpu_info() -> (String, f32) {
     }
 
     ("Unknown GPU".to_string(), 0.0)
+}
+
+/// Get total system memory in GB (for Apple Silicon unified memory)
+#[cfg(target_os = "macos")]
+fn get_macos_system_memory_gb() -> f32 {
+    use std::process::{Command, Stdio};
+
+    let output = Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let bytes_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Ok(bytes) = bytes_str.parse::<u64>() {
+                return bytes as f32 / (1024.0 * 1024.0 * 1024.0);
+            }
+        }
+    }
+
+    0.0
 }
 
 /// Get Mac model name from sysctl
