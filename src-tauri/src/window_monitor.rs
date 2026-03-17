@@ -65,7 +65,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
     use windows::Win32::Graphics::Gdi::MonitorFromWindow;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowRect, IsZoomed,
+        GetClassNameW, GetForegroundWindow, GetWindowRect, IsZoomed,
     };
 
     unsafe {
@@ -80,6 +80,16 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
                 if fg.0 as isize == hwnd.0 as isize {
                     return false;
                 }
+            }
+        }
+
+        // Skip the desktop window (wallpaper click makes Progman/WorkerW foreground)
+        let mut class_buf = [0u16; 64];
+        let len = GetClassNameW(fg, &mut class_buf) as usize;
+        if len > 0 {
+            let class_name = String::from_utf16_lossy(&class_buf[..len]);
+            if class_name == "Progman" || class_name == "WorkerW" {
+                return false;
             }
         }
 
