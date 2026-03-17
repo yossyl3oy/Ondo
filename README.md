@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/yossyl3oy/Ondo?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue?style=flat-square)]()
 
-A sleek, HUD-style hardware temperature monitoring widget built with Tauri 2.
+An Iron Man HUD-style hardware temperature monitoring widget built with Tauri 2.
 
 ## Features
 
@@ -14,17 +14,18 @@ A sleek, HUD-style hardware temperature monitoring widget built with Tauri 2.
 - GPU VRAM usage monitoring
 - Storage (SSD/HDD) temperature and usage
 - Motherboard temperature and fan speeds
+- Network speed monitoring (download/upload) with live graph
+- Audio device switching
+- Drag-and-drop section reordering with hide/restore
+- Three display modes: Normal, Compact, and Mini
 - Screen edge docking with drag support
-- Semi-transparent, stylish HUD design
-- System theme sync (auto dark/light mode)
+- Semi-transparent, frameless HUD design
+- System theme sync (Auto/Dark/Light)
 - Boot sequence animation
 - System tray integration
 - Auto-start on system boot (configurable)
 - Auto-update support
-
-## Screenshots
-
-The app displays a boot sequence animation on startup, then transitions to the main monitoring widget.
+- Remote debug server for LAN diagnostics
 
 ## Download
 
@@ -33,81 +34,120 @@ Download the latest release from the [Releases](https://github.com/yossyl3oy/Ond
 - **Windows**: `.msi` or `.exe` installer
 - **macOS**: `.dmg` disk image
 
-## Requirements (Development)
+## Display Modes
 
-- Node.js 18+
-- Rust 1.70+
-- Tauri CLI 2.x
-- .NET 8 SDK (for LibreHardwareMonitor CLI on Windows)
+- **Normal**: Full HUD widget with expandable/collapsible sections
+- **Compact**: All sections collapsed, showing only summary bars
+- **Mini**: Automatically activated when the window is resized narrow — single-line display per component with click-through support
 
 ## Settings
 
-The following options are available in the settings panel:
-
-- **Position**: Widget display position (right, left, corners)
-- **Opacity**: Transparency level (30-100%)
-- **Always on Top**: Keep widget above other windows
-- **Always on Back**: Keep widget below other windows (desktop widget mode)
+- **Position**: Right, Left, Top-Right, Top-Left, Bottom-Right, Bottom-Left
+- **Opacity**: 30–100%
+- **Always on Top / Always on Back**: Window layering control
 - **Auto Start**: Launch on system startup
-- **Show CPU Cores**: Display individual CPU core temperatures
-- **Update Interval**: Refresh rate (500ms-5000ms)
-- **Theme**: Theme selection (Auto/Dark/Light)
+- **Show CPU Cores**: Individual core temperatures in a grid
+- **Update Interval**: 500ms–5000ms
+- **Theme**: Auto (system) / Dark / Light
 - **Compact Mode**: Reduced widget size
+- **Debug Server**: Enable HTTP debug server on port 19210
 
-## Tech Stack
-
-- **Frontend**: React 18 + TypeScript + Vite
-- **Backend**: Tauri 2 (Rust)
-- **Hardware Monitoring**:
-  - Windows: LibreHardwareMonitor (daemon mode) + WMI fallback
-  - macOS: System APIs
-- **Error Tracking**: Sentry
-- **Styling**: CSS with HUD-style animations
-
-## Hardware Monitoring Details
+## Hardware Monitoring
 
 ### Windows
 
-Temperature and hardware data is retrieved using [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with [PawnIO](https://pawnio.eu/) driver support. This provides accurate sensor data for:
-- CPU: Temperature, load, frequency (per-core)
-- GPU: Temperature, load, frequency, VRAM usage
-- Storage: Temperature, used space
-- Motherboard: Temperature, fan speeds
+Hardware data is retrieved via [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) running as a daemon process (`ondo-hwmon.exe`), communicating over stdout in JSON. Monitored sensors:
 
-#### PawnIO Driver (Bundled)
+- **CPU**: Temperature, load, frequency (per-core)
+- **GPU**: Temperature, load, frequency, VRAM usage (NVIDIA / AMD / Intel)
+- **Storage**: Temperature, used space, total capacity
+- **Motherboard**: Temperature, fan speeds (RPM)
+- **Network**: Download/upload speed per adapter
 
-PawnIO is a modern, signed driver that replaces the legacy WinRing0 driver (blocked by Windows Defender since March 2025 due to CVE-2020-14979).
+Falls back to `sysinfo` for basic data when LibreHardwareMonitor is unavailable.
 
-The PawnIO installer is bundled with Ondo. If sensors are not showing:
+#### PawnIO Driver
+
+[PawnIO](https://github.com/namazso/PawnIO) is a modern, signed driver that replaces the legacy WinRing0 driver (blocked by Windows Defender since March 2025 due to CVE-2020-14979). The installer is bundled with Ondo.
+
+If sensors are not showing:
 1. Open Settings (gear icon)
 2. Click "Install PawnIO Driver"
 3. Accept the UAC prompt
 4. Restart Ondo
 
-Without PawnIO, the app will show "Connecting..." or some sensors may be unavailable. WMI is used as a fallback for basic data.
-
 PawnIO is licensed under GPL-2.0 and developed by [namazso](https://github.com/namazso/PawnIO).
 
 ### macOS
+
 Temperature data is retrieved using system APIs. Some sensors may not be available depending on hardware.
 
-## Development Setup
+## Debug Server
+
+Enable the Debug Server in Settings to start an HTTP server on port **19210**, allowing you to retrieve logs and sensor data over LAN.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Dashboard (HTML) — tabbed view of hardware, sensors, and logs |
+| `/help` | GET | API reference. Add `?format=json` for JSON output |
+| `/status` | GET | Process state (PID, version, log count, PawnIO status) |
+| `/api/hardware` | GET | Hardware sensor data (JSON) |
+| `/api/sensors` | GET | Raw sensor list (text) |
+| `/api/pawnio` | GET | PawnIO driver status (JSON, Windows only) |
+| `/logs` | GET | All logs. Filters: `?since=<epoch_ms>&limit=N&level=info&tag=Hardware` |
+| `/logs/tail` | GET | Latest N lines. `?n=100` (default) |
+| `/logs/search` | GET | Regex search. `?q=<pattern>&limit=200` |
+| `/clear` | POST | Clear log buffer |
+
+Add `?format=json` to any log endpoint for JSON output. Default format is plain text.
 
 ```bash
-# Clone the repository
+# Example usage (Mac to Windows over LAN)
+curl -s "http://<WINDOWS_IP>:19210/status"
+curl -s "http://<WINDOWS_IP>:19210/logs/tail?n=50"
+curl -s "http://<WINDOWS_IP>:19210/api/hardware"
+curl -s "http://<WINDOWS_IP>:19210/logs/search?q=error&format=json"
+```
+
+## Tech Stack
+
+- **Frontend**: React 19 + TypeScript + Vite
+- **Backend**: Tauri 2 (Rust)
+- **Hardware Monitoring**:
+  - Windows: LibreHardwareMonitor (.NET 8, daemon mode) + sysinfo fallback
+  - macOS: System APIs
+- **Package Manager**: pnpm (managed via [mise](https://mise.jdx.dev/))
+- **Error Tracking**: Sentry
+
+## Development
+
+### Requirements
+
+- [mise](https://mise.jdx.dev/) (manages Node.js and pnpm)
+- Rust 1.70+
+- Tauri CLI 2.x
+- .NET 8 SDK (Windows only, for building `ondo-hwmon`)
+
+### Setup
+
+```bash
 git clone https://github.com/yossyl3oy/Ondo.git
 cd Ondo
+pnpm install
+pnpm tauri dev
+```
 
-# Install dependencies
-npm install
+### Build
 
-# Run in development mode
-npm run tauri dev
-
-# Build for production
-npm run tauri build
+```bash
+pnpm tauri build
 ```
 
 ## License
 
-MIT License
+[MIT](LICENSE)
+
+### Third-Party Licenses
+
+- [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — MPL-2.0
+- [PawnIO](https://github.com/namazso/PawnIO) — GPL-2.0
