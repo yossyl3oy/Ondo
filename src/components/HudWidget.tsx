@@ -35,6 +35,7 @@ interface HudWidgetProps {
   onSwitchAudioDevice: (deviceId: string) => void;
   audioSwitching?: boolean;
   miniMode?: boolean;
+  compactMode?: boolean;
 }
 
 export function HudWidget({
@@ -51,6 +52,7 @@ export function HudWidget({
   onSwitchAudioDevice,
   audioSwitching,
   miniMode,
+  compactMode,
 }: HudWidgetProps) {
   const [showCores, setShowCores] = useState(false);
   const [version, setVersion] = useState("1.0.0");
@@ -82,6 +84,15 @@ export function HudWidget({
         console.error("[HudWidget] Version error:", e);
       });
   }, []);
+
+  // Compact mode: collapse all sections
+  useEffect(() => {
+    if (compactMode) {
+      setCollapsedSections(new Set(sectionOrder));
+    } else {
+      setCollapsedSections(new Set());
+    }
+  }, [compactMode, sectionOrder]);
 
   const toggleCollapse = useCallback((type: SectionType) => {
     if (dragRef.current?.isDragging || wasDraggingRef.current) return;
@@ -650,11 +661,12 @@ export function HudWidget({
     );
   };
 
-  const formatSpeed = (bytesPerSec: number): string => {
-    if (bytesPerSec >= 1_073_741_824) return `${(bytesPerSec / 1_073_741_824).toFixed(1)} GB/s`;
-    if (bytesPerSec >= 1_048_576) return `${(bytesPerSec / 1_048_576).toFixed(1)} MB/s`;
-    if (bytesPerSec >= 1_024) return `${(bytesPerSec / 1_024).toFixed(1)} KB/s`;
-    return `${Math.round(bytesPerSec)} B/s`;
+  const formatSpeed = (bytesPerSec: number, short = false): string => {
+    const suffix = short ? "" : "/s";
+    if (bytesPerSec >= 1_073_741_824) return `${(bytesPerSec / 1_073_741_824).toFixed(1)} GB${suffix}`;
+    if (bytesPerSec >= 1_048_576) return `${(bytesPerSec / 1_048_576).toFixed(1)} MB${suffix}`;
+    if (bytesPerSec >= 1_024) return `${(bytesPerSec / 1_024).toFixed(1)} KB${suffix}`;
+    return `${Math.round(bytesPerSec)} B${suffix}`;
   };
 
   const renderNetworkSection = () => {
@@ -792,9 +804,9 @@ export function HudWidget({
               <div key="network" className="mini-row network">
                 <div className="section-indicator network" />
                 <span className="mini-label">NET</span>
-                <span className="mini-net-speed"><span className="mini-unit">▼</span>{formatSpeed(totalDl)}</span>
+                <span className="mini-net-speed"><span className="mini-unit">▼</span>{formatSpeed(totalDl, true)}</span>
                 <span className="mini-divider">|</span>
-                <span className="mini-net-speed"><span className="mini-unit">▲</span>{formatSpeed(totalUl)}</span>
+                <span className="mini-net-speed"><span className="mini-unit">▲</span>{formatSpeed(totalUl, true)}</span>
               </div>
             );
           }

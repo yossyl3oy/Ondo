@@ -105,7 +105,12 @@ export function useUpdater() {
           case "Progress":
             downloaded += event.data.chunkLength;
             if (contentLength > 0) {
-              const progress = Math.round((downloaded / contentLength) * 100);
+              const progress = Math.min(Math.round((downloaded / contentLength) * 100), 99);
+              setState((prev) => ({ ...prev, progress }));
+            } else {
+              // Content-Length unknown: estimate based on ~50MB typical update size
+              const estimatedTotal = 50 * 1024 * 1024;
+              const progress = Math.min(Math.round((downloaded / estimatedTotal) * 100), 95);
               setState((prev) => ({ ...prev, progress }));
             }
             break;

@@ -11,6 +11,7 @@ mod tray;
 mod window_monitor;
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
@@ -94,6 +95,7 @@ pub struct HardwareData {
 
 pub struct AppState {
     settings: Mutex<settings::AppSettings>,
+    debug_server_running: AtomicBool,
 }
 
 #[tauri::command]
@@ -541,6 +543,21 @@ async fn set_default_audio_device(device_id: String) -> Result<(), String> {
     audio::set_default_audio_device(&device_id)
 }
 
+#[tauri::command]
+async fn toggle_debug_server(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let was_running = state.debug_server_running.load(Ordering::SeqCst);
+    if enabled && !was_running {
+        state.debug_server_running.store(true, Ordering::SeqCst);
+        tauri::async_runtime::spawn(debug_server::start_debug_server());
+    }
+    // Note: stopping a running server requires the server to check a shutdown signal.
+    // For now, disabling only prevents restart on next launch.
+    if !enabled {
+        state.debug_server_running.store(false, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
 fn main() {
     // Capture all `log` crate output (including Tauri internals) into the debug server buffer
     log_buffer::init_logger();
@@ -555,6 +572,7 @@ fn main() {
     let startup_position = initial_settings.position.clone();
     let startup_always_on_top = initial_settings.always_on_top;
     let startup_always_on_back = initial_settings.always_on_back;
+    let startup_debug_server = initial_settings.debug_server;
     let startup_window_state = initial_settings.window_state.clone();
 
     tauri::Builder::default()
@@ -563,13 +581,18 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
             settings: Mutex::new(initial_settings),
+            debug_server_running: AtomicBool::new(false),
         })
         .setup(move |app| {
             // Setup system tray
             tray::setup_tray(app)?;
 
-            // Start debug HTTP server (http://0.0.0.0:19210)
-            tauri::async_runtime::spawn(debug_server::start_debug_server());
+            // Start debug HTTP server if enabled (http://0.0.0.0:19210)
+            if startup_debug_server {
+                let state = app.state::<AppState>();
+                state.debug_server_running.store(true, Ordering::SeqCst);
+                tauri::async_runtime::spawn(debug_server::start_debug_server());
+            }
 
             // Start window monitor for mini mode (detects maximized foreground windows)
             window_monitor::start_monitoring(app.handle().clone());
@@ -611,6 +634,7 @@ fn main() {
             download_and_install_pawnio,
             get_audio_devices,
             set_default_audio_device,
+            toggle_debug_server,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

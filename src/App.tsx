@@ -224,6 +224,7 @@ function App() {
         onSwitchAudioDevice={switchAudioDevice}
         audioSwitching={audioSwitching}
         miniMode={miniMode}
+        compactMode={settings.compactMode}
       />
       {showSettings && (
         <SettingsPanel

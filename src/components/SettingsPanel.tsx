@@ -319,7 +319,25 @@ export function SettingsPanel({
             </div>
           )}
 
-          {/* Debug: Test Sentry */}
+          {/* Dev */}
+          <div className="setting-group">
+            <label className="setting-label">Dev</label>
+          </div>
+
+          <div className="setting-group toggle-group">
+            <label className="setting-toggle">
+              <span>Debug Server (port 19210)</span>
+              <input
+                type="checkbox"
+                checked={settings.debugServer}
+                onChange={(e) =>
+                  onSettingsChange({ debugServer: e.target.checked })
+                }
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
           {import.meta.env.DEV && (
             <div className="setting-group">
               <button

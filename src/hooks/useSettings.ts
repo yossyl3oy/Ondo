@@ -95,6 +95,9 @@ export function useSettings(): UseSettingsResult {
       if (newSettings.autoStart !== undefined) {
         await invoke("set_auto_start", { enabled: newSettings.autoStart });
       }
+      if (newSettings.debugServer !== undefined) {
+        await invoke("toggle_debug_server", { enabled: newSettings.debugServer });
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       captureSettingsError(errorMessage, "save");

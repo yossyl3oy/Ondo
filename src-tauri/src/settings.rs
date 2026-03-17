@@ -24,6 +24,8 @@ pub struct AppSettings {
     pub update_interval: u32,
     pub theme: String,
     pub compact_mode: bool,
+    #[serde(default)]
+    pub debug_server: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_state: Option<WindowState>,
 }
@@ -40,6 +42,7 @@ impl Default for AppSettings {
             update_interval: 1000,
             theme: "auto".to_string(),
             compact_mode: false,
+            debug_server: false,
             window_state: None,
         }
     }

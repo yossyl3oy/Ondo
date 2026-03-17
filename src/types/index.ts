@@ -75,6 +75,7 @@ export interface AppSettings {
   updateInterval: number;
   theme: "auto" | "dark" | "light";
   compactMode: boolean;
+  debugServer: boolean;
   sectionOrder: SectionType[];
   hiddenSections: SectionType[];
   windowState?: WindowState;
@@ -90,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,
+  debugServer: false,
   sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio"],
   hiddenSections: [],
 };
