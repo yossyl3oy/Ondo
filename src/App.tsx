@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { HudWidget } from "./components/HudWidget";
 import { BootSequence } from "./components/BootSequence";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -74,6 +75,8 @@ function App() {
           await invoke("set_window_min_size", { width: null, height: null });
           // Disable window shadow to remove transparent border in mini mode
           await invoke("set_window_shadow", { enable: false });
+          // Make window click-through so users can interact with apps below
+          await getCurrentWindow().setIgnoreCursorEvents(true);
 
           // Wait a frame for React to render mini content, then fit window to it
           requestAnimationFrame(async () => {
@@ -104,6 +107,8 @@ function App() {
           });
           // Re-enable window shadow
           await invoke("set_window_shadow", { enable: true });
+          // Restore click interaction
+          await getCurrentWindow().setIgnoreCursorEvents(false);
           // Restore saved window size, then reposition to avoid overflow
           await invoke("restore_window_state", { state: savedWindowStateRef.current });
           savedWindowStateRef.current = null;
