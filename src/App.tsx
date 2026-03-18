@@ -21,6 +21,7 @@ function App() {
   const [showUpdateNotification, setShowUpdateNotification] = useState(true);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [miniMode, setMiniMode] = useState(false);
+  const [cursorNear, setCursorNear] = useState(false);
   const savedWindowStateRef = useRef<WindowState | null>(null);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
@@ -59,11 +60,23 @@ function App() {
     };
   }, []);
 
+  // Listen for cursor proximity in mini mode
+  useEffect(() => {
+    const unlisten = listen<{ near: boolean }>("cursor-near-minimode", (event) => {
+      setCursorNear(event.payload.near);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Listen for minimode-changed events from window monitor
   useEffect(() => {
     const unlisten = listen<{ active: boolean }>("minimode-changed", async (event) => {
       const active = event.payload.active;
       setMiniMode(active);
+      if (!active) setCursorNear(false);
 
       try {
         if (active) {
@@ -207,7 +220,7 @@ function App() {
   return (
     <div
       className={`app-container${miniMode ? " mini" : ""}`}
-      style={{ opacity: settings.opacity / 100 }}
+      style={{ opacity: miniMode && cursorNear ? (settings.opacity / 100) * 0.1 : settings.opacity / 100 }}
     >
       {!miniMode && <div className="scanlines" />}
       <HudWidget

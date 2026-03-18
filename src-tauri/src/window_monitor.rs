@@ -1,15 +1,18 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter};
-
-#[cfg(target_os = "windows")]
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
 
 static LAST_STATE: AtomicBool = AtomicBool::new(false);
+static LAST_CURSOR_NEAR: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize)]
 struct MiniModePayload {
     active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CursorNearPayload {
+    near: bool,
 }
 
 /// Start background monitoring for maximized/fullscreen foreground windows.
@@ -30,32 +33,113 @@ pub fn start_monitoring(app: AppHandle) {
             crate::log_info!("WindowMonitor", "Mini mode activated (startup)");
         }
 
+        let mut tick: u32 = 0;
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let in_mini = LAST_STATE.load(Ordering::Relaxed);
+            // In mini mode: poll every 200ms. Otherwise: every 1s.
+            let interval = if in_mini { 200 } else { 1000 };
+            tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
 
-            let is_maximized = is_foreground_maximized(&app);
-            let prev = LAST_STATE.load(Ordering::Relaxed);
+            // Check foreground maximized state every 1s (every 5th tick in mini mode)
+            tick = tick.wrapping_add(1);
+            let check_maximized = !in_mini || tick % 5 == 0;
 
-            if is_maximized != prev {
-                LAST_STATE.store(is_maximized, Ordering::Relaxed);
-                let _ = app.emit(
-                    "minimode-changed",
-                    MiniModePayload {
-                        active: is_maximized,
-                    },
-                );
-                crate::log_info!(
-                    "WindowMonitor",
-                    "Mini mode {}",
-                    if is_maximized {
-                        "activated"
-                    } else {
-                        "deactivated"
+            if check_maximized {
+                let is_maximized = is_foreground_maximized(&app);
+                let prev = LAST_STATE.load(Ordering::Relaxed);
+
+                if is_maximized != prev {
+                    LAST_STATE.store(is_maximized, Ordering::Relaxed);
+                    // Reset cursor-near state when leaving mini mode
+                    if !is_maximized {
+                        LAST_CURSOR_NEAR.store(false, Ordering::Relaxed);
                     }
-                );
+                    let _ = app.emit(
+                        "minimode-changed",
+                        MiniModePayload {
+                            active: is_maximized,
+                        },
+                    );
+                    crate::log_info!(
+                        "WindowMonitor",
+                        "Mini mode {}",
+                        if is_maximized {
+                            "activated"
+                        } else {
+                            "deactivated"
+                        }
+                    );
+                }
+            }
+
+            // Check cursor proximity when in mini mode
+            if LAST_STATE.load(Ordering::Relaxed) {
+                let near = is_cursor_near_window(&app, 50);
+                let prev_near = LAST_CURSOR_NEAR.load(Ordering::Relaxed);
+                if near != prev_near {
+                    LAST_CURSOR_NEAR.store(near, Ordering::Relaxed);
+                    let _ = app.emit("cursor-near-minimode", CursorNearPayload { near });
+                }
             }
         }
     });
+}
+
+// ── Cursor proximity detection ──────────────────────────────────────────────
+
+/// Check if cursor is within `margin` pixels of the Ondo window.
+fn is_cursor_near_window(app: &AppHandle, margin: i32) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let Ok(pos) = window.outer_position() else {
+        return false;
+    };
+    let Ok(size) = window.outer_size() else {
+        return false;
+    };
+    let Some((cx, cy)) = get_cursor_position() else {
+        return false;
+    };
+
+    let left = pos.x - margin;
+    let top = pos.y - margin;
+    let right = pos.x + size.width as i32 + margin;
+    let bottom = pos.y + size.height as i32 + margin;
+
+    cx >= left && cx <= right && cy >= top && cy <= bottom
+}
+
+#[cfg(target_os = "windows")]
+fn get_cursor_position() -> Option<(i32, i32)> {
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    unsafe {
+        let mut point = std::mem::zeroed();
+        if GetCursorPos(&mut point).is_ok() {
+            Some((point.x, point.y))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_cursor_position() -> Option<(i32, i32)> {
+    unsafe {
+        let event = CGEventCreate(std::ptr::null());
+        if event.is_null() {
+            return None;
+        }
+        let loc = CGEventGetLocation(event);
+        CFRelease(event as *const _);
+        Some((loc.x as i32, loc.y as i32))
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn get_cursor_position() -> Option<(i32, i32)> {
+    None
 }
 
 // ── Windows implementation ──────────────────────────────────────────────────
@@ -227,6 +311,13 @@ const CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
 const CG_NULL_WINDOW_ID: u32 = 0;
 
 #[cfg(target_os = "macos")]
+#[repr(C)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(
@@ -236,6 +327,14 @@ extern "C" {
     fn CGMainDisplayID() -> u32;
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;
+    fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
+    fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(cf: *const std::ffi::c_void);
 }
 
 // ── Fallback for other platforms ────────────────────────────────────────────
