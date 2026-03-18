@@ -753,7 +753,7 @@ fn init_macos_monitor() -> MacOsMonitor {
 
     // Log available temperature sensors for debugging
     for comp in components.iter() {
-        crate::log_debug!("macOS", "Temperature sensor: {} = {}°C", comp.label(), comp.temperature());
+        crate::log_debug!("macOS", "Temperature sensor: {} = {:?}°C", comp.label(), comp.temperature());
     }
 
     let (gpu_name, mut gpu_memory_total) = get_macos_gpu_info();
@@ -842,10 +842,10 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
         // Refresh sensor data
         monitor.system.refresh_cpu_usage();
-        monitor.components.refresh_list();
-        monitor.disks.refresh_list();
+        monitor.components.refresh(true);
+        monitor.disks.refresh(true);
         let net_elapsed = monitor.last_refresh.elapsed().as_secs_f64();
-        monitor.networks.refresh();
+        monitor.networks.refresh(true);
         monitor.last_refresh = std::time::Instant::now();
 
         // On first call, CPU usage is always 0% — mark as initialized for subsequent calls
@@ -860,8 +860,10 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         let mut board_temps = Vec::new();
 
         for comp in monitor.components.iter() {
-            let temp = comp.temperature();
-            if temp <= 0.0 || temp > 150.0 { continue; }
+            let temp = match comp.temperature() {
+                Some(t) if t > 0.0 && t <= 150.0 => t,
+                _ => continue,
+            };
 
             match classify_temperature(comp.label()) {
                 TempKind::Cpu => cpu_temps.push(temp),

@@ -1,6 +1,6 @@
 [package]
 name = "ondo"
-version = "0.1.0-beta.20"
+version = "0.1.0-beta.21"
 description = "Iron Man HUD-style hardware temperature monitoring widget"
 authors = ["Ondo"]
 license = "MIT"
@@ -27,7 +27,6 @@ sysinfo = "0.38"
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"
 windows = { version = "0.62", features = [
-    "implement",
     "Win32_Foundation",
     "Win32_System_Pipes",
     "Win32_Storage_FileSystem",

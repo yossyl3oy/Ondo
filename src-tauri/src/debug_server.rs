@@ -367,8 +367,8 @@ async fn get_raw_sensor_data() -> String {
         output.push_str(&format!(
             "  {:<30} = {:>6.1}°C  (max: {:.1}°C)\n",
             comp.label(),
-            comp.temperature(),
-            comp.max(),
+            comp.temperature().unwrap_or(0.0),
+            comp.max().unwrap_or(0.0),
         ));
     }
 

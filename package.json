@@ -1,6 +1,6 @@
 {
   "name": "ondo",
-  "version": "0.1.0-beta.20",
+  "version": "0.1.0-beta.21",
   "description": "HUD-style hardware temperature monitoring widget",
   "license": "MIT",
   "type": "module",
@@ -19,6 +19,12 @@
     "@tauri-apps/plugin-updater": "^2.10.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@sentry/cli",
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "@sentry/vite-plugin": "^5.1.1",
