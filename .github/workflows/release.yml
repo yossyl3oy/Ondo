@@ -23,7 +23,7 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
       is_rebuild: ${{ steps.check-release.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Get version from package.json
         id: get-version
@@ -103,15 +103,15 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '25.2.1'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: latest
 
@@ -127,7 +127,7 @@ jobs:
 
       - name: Setup .NET (Windows)
         if: matrix.platform == 'windows-latest'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
@@ -167,7 +167,7 @@ jobs:
       - name: Cache NSIS (Windows)
         if: matrix.platform == 'windows-latest'
         id: cache-nsis
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.tauri/NSIS
           key: nsis-3.11
