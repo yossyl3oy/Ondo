@@ -212,20 +212,6 @@ export function SettingsPanel({
 
           <div className="setting-group toggle-group">
             <label className="setting-toggle">
-              <span>Show CPU Cores</span>
-              <input
-                type="checkbox"
-                checked={settings.showCpuCores}
-                onChange={(e) =>
-                  onSettingsChange({ showCpuCores: e.target.checked })
-                }
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <div className="setting-group toggle-group">
-            <label className="setting-toggle">
               <span>Compact Mode</span>
               <input
                 type="checkbox"
@@ -254,14 +240,14 @@ export function SettingsPanel({
               {updateInfo?.available && onInstallUpdate && (
                 <div className="update-install-section">
                   {downloading ? (
-                    <div className="update-progress">
-                      <div className="update-progress-bar">
+                    <div className="settings-update-progress">
+                      <div className="settings-update-progress-bar">
                         <div
-                          className="update-progress-fill"
+                          className="settings-update-progress-fill"
                           style={{ width: `${downloadProgress || 0}%` }}
                         />
                       </div>
-                      <span className="update-progress-text">
+                      <span className="settings-update-progress-text">
                         {(downloadProgress || 0) >= 100
                           ? "Installing..."
                           : `Downloading... ${Math.round(downloadProgress || 0)}%`}

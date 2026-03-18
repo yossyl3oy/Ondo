@@ -71,7 +71,6 @@ export interface AppSettings {
   alwaysOnTop: boolean;
   alwaysOnBack: boolean;
   autoStart: boolean;
-  showCpuCores: boolean;
   updateInterval: number;
   theme: "auto" | "dark" | "light";
   compactMode: boolean;
@@ -87,7 +86,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   alwaysOnTop: false,
   alwaysOnBack: false,
   autoStart: false,
-  showCpuCores: false,
   updateInterval: 1000,
   theme: "auto",
   compactMode: false,

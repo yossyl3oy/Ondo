@@ -20,7 +20,6 @@ pub struct AppSettings {
     #[serde(default)]
     pub always_on_back: bool,
     pub auto_start: bool,
-    pub show_cpu_cores: bool,
     pub update_interval: u32,
     pub theme: String,
     pub compact_mode: bool,
@@ -38,7 +37,6 @@ impl Default for AppSettings {
             always_on_top: false,
             always_on_back: false,
             auto_start: false,
-            show_cpu_cores: false,
             update_interval: 1000,
             theme: "auto".to_string(),
             compact_mode: false,

@@ -1,9 +1,11 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect } from "react";
 import type { HardwareData, SectionType, AudioDevice } from "../types";
+
+const COLLAPSED_KEY = "ondo_collapsed_sections";
+const SHOW_CORES_KEY = "ondo_show_cpu_cores";
 import { TemperatureGauge } from "./TemperatureGauge";
 import { CpuCoreGrid } from "./CpuCoreGrid";
 import { NetworkGraph } from "./NetworkGraph";
@@ -54,13 +56,25 @@ export function HudWidget({
   miniMode,
   compactMode,
 }: HudWidgetProps) {
-  const [showCores, setShowCores] = useState(false);
+  const [showCpuCores, setShowCpuCores] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_CORES_KEY) === "true";
+    } catch { return false; }
+  });
   const [version, setVersion] = useState("1.0.0");
   const [isDragging, setIsDragging] = useState(false);
   const [draggedType, setDraggedType] = useState<SectionType | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
   const visualOrderRef = useRef<SectionType[]>(sectionOrder);
-  const [collapsedSections, setCollapsedSections] = useState<Set<SectionType>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<SectionType>>(() => {
+    try {
+      const stored = localStorage.getItem(COLLAPSED_KEY);
+      if (stored) {
+        return new Set(JSON.parse(stored) as SectionType[]);
+      }
+    } catch { /* use default */ }
+    return new Set();
+  });
   const dragRef = useRef<DragInfo | null>(null);
   const wasDraggingRef = useRef(false);
   const sectionRefs = useRef<Map<SectionType, HTMLDivElement>>(new Map());
@@ -85,14 +99,31 @@ export function HudWidget({
       });
   }, []);
 
-  // Compact mode: collapse all sections
+  // Persist collapsed sections to localStorage (skip when compact mode forces all collapsed)
+  useEffect(() => {
+    if (!compactMode) {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedSections]));
+    }
+  }, [collapsedSections, compactMode]);
+
+  // Compact mode: collapse all sections; restore saved state when exiting
   useEffect(() => {
     if (compactMode) {
       setCollapsedSections(new Set(sectionOrder));
     } else {
-      setCollapsedSections(new Set());
+      try {
+        const stored = localStorage.getItem(COLLAPSED_KEY);
+        if (stored) {
+          setCollapsedSections(new Set(JSON.parse(stored) as SectionType[]));
+        } else {
+          setCollapsedSections(new Set());
+        }
+      } catch {
+        setCollapsedSections(new Set());
+      }
     }
-  }, [compactMode, sectionOrder]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compactMode]);
 
   const toggleCollapse = useCallback((type: SectionType) => {
     if (dragRef.current?.isDragging || wasDraggingRef.current) return;
@@ -362,16 +393,16 @@ export function HudWidget({
               </div>
             )}
 
-            {showCores && cpu.cores && cpu.cores.length > 0 && (
+            {showCpuCores && cpu.cores && cpu.cores.length > 0 && (
               <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
             )}
             {cpu.cores && cpu.cores.length > 0 && (
               <div
                 className="cores-toggle"
-                onClick={(e) => { e.stopPropagation(); setShowCores(!showCores); }}
+                onClick={(e) => { e.stopPropagation(); setShowCpuCores((v) => { localStorage.setItem(SHOW_CORES_KEY, String(!v)); return !v; }); }}
               >
-                <span className="cores-toggle-label">{showCores ? "Hide Cores" : "Show Cores"}</span>
-                <span className="expand-icon">{showCores ? "▾" : "▸"}</span>
+                <span className="cores-toggle-label">{showCpuCores ? "Hide Cores" : "Show Cores"}</span>
+                <span className="expand-icon">{showCpuCores ? "▾" : "▸"}</span>
               </div>
             )}
           </>
