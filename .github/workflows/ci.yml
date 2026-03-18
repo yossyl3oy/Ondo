@@ -43,6 +43,9 @@ jobs:
       - name: Type check (tsc)
         run: pnpm exec tsc --noEmit
 
+      - name: npm audit
+        run: pnpm audit --prod
+
       - name: Build frontend
         run: pnpm build
 
@@ -66,6 +69,12 @@ jobs:
 
       - name: Cargo check
         run: cargo check
+        working-directory: src-tauri
+
+      - name: Cargo audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
         working-directory: src-tauri
 
   bump-lhm-pr-version:
