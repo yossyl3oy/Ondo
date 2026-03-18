@@ -238,6 +238,7 @@ function App() {
         audioSwitching={audioSwitching}
         miniMode={miniMode}
         compactMode={settings.compactMode}
+        temperatureUnit={settings.temperatureUnit}
       />
       {showSettings && (
         <SettingsPanel

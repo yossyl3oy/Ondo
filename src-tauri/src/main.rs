@@ -539,8 +539,8 @@ async fn get_audio_devices() -> Result<Vec<audio::AudioDevice>, String> {
 }
 
 #[tauri::command]
-async fn set_default_audio_device(device_id: String) -> Result<(), String> {
-    audio::set_default_audio_device(&device_id)
+async fn set_default_audio_device(device_id: String, device_type: String) -> Result<(), String> {
+    audio::set_default_audio_device(&device_id, &device_type)
 }
 
 #[tauri::command]

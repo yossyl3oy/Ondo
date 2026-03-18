@@ -6,7 +6,7 @@ interface UseAudioDevicesReturn {
   devices: AudioDevice[];
   switching: boolean;
   error: string | null;
-  switchDevice: (deviceId: string) => Promise<void>;
+  switchDevice: (deviceId: string, deviceType: "playback" | "recording") => Promise<void>;
 }
 
 export function useAudioDevices(): UseAudioDevicesReturn {
@@ -38,10 +38,10 @@ export function useAudioDevices(): UseAudioDevicesReturn {
   }, [fetchDevices]);
 
   const switchDevice = useCallback(
-    async (deviceId: string) => {
+    async (deviceId: string, deviceType: "playback" | "recording") => {
       setSwitching(true);
       try {
-        await invoke("set_default_audio_device", { deviceId });
+        await invoke("set_default_audio_device", { deviceId, deviceType });
         // Refresh device list immediately after switching
         await fetchDevices();
       } catch (err) {

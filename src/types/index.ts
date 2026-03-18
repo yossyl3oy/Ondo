@@ -73,6 +73,7 @@ export interface AppSettings {
   autoStart: boolean;
   updateInterval: number;
   theme: "auto" | "dark" | "light";
+  temperatureUnit: "celsius" | "fahrenheit";
   compactMode: boolean;
   debugServer: boolean;
   sectionOrder: SectionType[];
@@ -88,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoStart: false,
   updateInterval: 1000,
   theme: "auto",
+  temperatureUnit: "celsius",
   compactMode: false,
   debugServer: false,
   sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio"],
@@ -100,6 +102,7 @@ export interface AudioDevice {
   id: string;
   name: string;
   is_default: boolean;
+  device_type: "playback" | "recording";
 }
 
 export interface PawnIOStatus {

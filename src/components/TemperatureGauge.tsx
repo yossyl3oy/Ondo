@@ -5,6 +5,7 @@ interface TemperatureGaugeProps {
   max: number;
   status: "normal" | "warning" | "danger";
   label: string;
+  unit?: string;
 }
 
 export function TemperatureGauge({
@@ -12,6 +13,7 @@ export function TemperatureGauge({
   max,
   status,
   label,
+  unit = "°C",
 }: TemperatureGaugeProps) {
   const isAvailable = value > 0;
   const percentage = isAvailable ? Math.min((value / max) * 100, 100) : 0;
@@ -94,7 +96,7 @@ export function TemperatureGauge({
       </svg>
       <div className="gauge-content">
         <span className={`gauge-value ${!isAvailable ? 'unavailable' : ''}`}>
-          {isAvailable ? `${Math.round(value)}°` : 'N/A'}
+          {isAvailable ? <>{Math.round(value)}<span className="gauge-unit">{unit}</span></> : 'N/A'}
         </span>
         <span className="gauge-label">{label}</span>
       </div>

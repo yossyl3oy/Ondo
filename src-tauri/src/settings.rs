@@ -22,6 +22,8 @@ pub struct AppSettings {
     pub auto_start: bool,
     pub update_interval: u32,
     pub theme: String,
+    #[serde(default = "default_temperature_unit")]
+    pub temperature_unit: String,
     pub compact_mode: bool,
     #[serde(default)]
     pub debug_server: bool,
@@ -39,11 +41,16 @@ impl Default for AppSettings {
             auto_start: false,
             update_interval: 1000,
             theme: "auto".to_string(),
+            temperature_unit: "celsius".to_string(),
             compact_mode: false,
             debug_server: false,
             window_state: None,
         }
     }
+}
+
+fn default_temperature_unit() -> String {
+    "celsius".to_string()
 }
 
 fn get_settings_path() -> PathBuf {

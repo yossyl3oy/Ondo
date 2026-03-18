@@ -81,6 +81,12 @@
   line-height: 1;
 }
 
+.gauge-unit {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: -0.5px;
+}
+
 .gauge-value.unavailable {
   font-size: 12px;
   color: var(--hud-text-secondary);

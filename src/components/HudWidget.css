@@ -389,6 +389,22 @@
 }
 
 /* Audio section styles */
+.audio-subsection {
+  margin-bottom: 6px;
+}
+
+.audio-subsection:last-child {
+  margin-bottom: 0;
+}
+
+.audio-subsection-label {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--hud-text-secondary);
+  margin-bottom: 4px;
+}
+
 .audio-select-wrapper {
   display: flex;
   align-items: center;

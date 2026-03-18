@@ -161,6 +161,23 @@ export function SettingsPanel({
             </select>
           </div>
 
+          {/* Temperature Unit */}
+          <div className="setting-group">
+            <label className="setting-label">Temperature Unit</label>
+            <select
+              className="setting-select"
+              value={settings.temperatureUnit}
+              onChange={(e) =>
+                onSettingsChange({
+                  temperatureUnit: e.target.value as AppSettings["temperatureUnit"],
+                })
+              }
+            >
+              <option value="celsius">Celsius (°C)</option>
+              <option value="fahrenheit">Fahrenheit (°F)</option>
+            </select>
+          </div>
+
           {/* Toggle switches */}
           <div className="setting-group toggle-group">
             <label className="setting-toggle">

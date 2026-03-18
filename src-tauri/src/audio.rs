@@ -5,6 +5,7 @@ pub struct AudioDevice {
     pub id: String,
     pub name: String,
     pub is_default: bool,
+    pub device_type: String, // "playback" or "recording"
 }
 
 // ============================================================
@@ -61,10 +62,10 @@ mod platform {
         }
     }
 
-    unsafe fn device_has_output_streams(device_id: AudioDeviceID) -> bool {
+    unsafe fn device_has_streams(device_id: AudioDeviceID, scope: AudioObjectPropertyScope) -> bool {
         let address = AudioObjectPropertyAddress {
             mSelector: kAudioDevicePropertyStreams,
-            mScope: kAudioObjectPropertyScopeOutput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain,
         };
 
@@ -80,9 +81,9 @@ mod platform {
         status == 0 && size > 0
     }
 
-    unsafe fn get_default_output_device() -> AudioDeviceID {
+    unsafe fn get_default_device(selector: AudioObjectPropertySelector) -> AudioDeviceID {
         let address = AudioObjectPropertyAddress {
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain,
         };
@@ -143,37 +144,54 @@ mod platform {
                 return Err(format!("Failed to get device list: {}", status));
             }
 
-            let default_id = get_default_output_device();
+            let default_output_id = get_default_device(kAudioHardwarePropertyDefaultOutputDevice);
+            let default_input_id = get_default_device(kAudioHardwarePropertyDefaultInputDevice);
             let mut devices = Vec::new();
 
             for &dev_id in &device_ids {
-                // Only include devices with output streams
-                if !device_has_output_streams(dev_id) {
-                    continue;
-                }
-
                 let name = get_string_property(dev_id, kAudioObjectPropertyName)
                     .unwrap_or_else(|| format!("Unknown Device {}", dev_id));
 
-                devices.push(AudioDevice {
-                    id: dev_id.to_string(),
-                    name,
-                    is_default: dev_id == default_id,
-                });
+                let has_output = device_has_streams(dev_id, kAudioObjectPropertyScopeOutput);
+                let has_input = device_has_streams(dev_id, kAudioObjectPropertyScopeInput);
+
+                if has_output {
+                    devices.push(AudioDevice {
+                        id: dev_id.to_string(),
+                        name: name.clone(),
+                        is_default: dev_id == default_output_id,
+                        device_type: "playback".to_string(),
+                    });
+                }
+
+                if has_input {
+                    devices.push(AudioDevice {
+                        id: dev_id.to_string(),
+                        name,
+                        is_default: dev_id == default_input_id,
+                        device_type: "recording".to_string(),
+                    });
+                }
             }
 
             Ok(devices)
         }
     }
 
-    pub fn set_default_audio_device(device_id: &str) -> Result<(), String> {
+    pub fn set_default_audio_device(device_id: &str, device_type: &str) -> Result<(), String> {
         let dev_id: AudioDeviceID = device_id
             .parse()
             .map_err(|_| format!("Invalid device ID: {}", device_id))?;
 
+        let selector = if device_type == "recording" {
+            kAudioHardwarePropertyDefaultInputDevice
+        } else {
+            kAudioHardwarePropertyDefaultOutputDevice
+        };
+
         unsafe {
             let address = AudioObjectPropertyAddress {
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mSelector: selector,
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain,
             };
@@ -189,7 +207,7 @@ mod platform {
             );
 
             if status != 0 {
-                Err(format!("Failed to set default output device: {}", status))
+                Err(format!("Failed to set default {} device: {}", device_type, status))
             } else {
                 Ok(())
             }
@@ -235,37 +253,22 @@ mod platform {
 
     const CLSID_POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
 
-    pub fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
+    fn enumerate_devices(
+        enumerator: &IMMDeviceEnumerator,
+        data_flow: EDataFlow,
+        device_type_str: &str,
+        default_id: &Option<String>,
+    ) -> Vec<AudioDevice> {
         unsafe {
-            // Initialize COM
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let collection = match enumerator.EnumAudioEndpoints(data_flow, DEVICE_STATE_ACTIVE) {
+                Ok(c) => c,
+                Err(_) => return Vec::new(),
+            };
 
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            )
-            .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
-
-            // Get default output device
-            let default_device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .ok();
-            let default_id = default_device.as_ref().and_then(|d| {
-                d.GetId().ok().map(|id| {
-                    let s = id.to_string().unwrap_or_default();
-                    s
-                })
-            });
-
-            // Enumerate all active render devices
-            let collection = enumerator
-                .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
-                .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
-
-            let count = collection
-                .GetCount()
-                .map_err(|e| format!("Failed to get device count: {}", e))?;
+            let count = match collection.GetCount() {
+                Ok(c) => c,
+                Err(_) => return Vec::new(),
+            };
 
             let mut devices = Vec::new();
 
@@ -283,13 +286,10 @@ mod platform {
                     Err(_) => continue,
                 };
 
-                // Get friendly name from property store
                 let name = match device.OpenPropertyStore(STGM_READ) {
                     Ok(store) => {
                         match store.GetValue(&PKEY_Device_FriendlyName) {
-                            Ok(prop) => {
-                                prop.to_string().trim().to_string()
-                            }
+                            Ok(prop) => prop.to_string().trim().to_string(),
                             Err(_) => format!("Audio Device {}", i),
                         }
                     }
@@ -305,14 +305,46 @@ mod platform {
                     id,
                     name,
                     is_default,
+                    device_type: device_type_str.to_string(),
                 });
             }
+
+            devices
+        }
+    }
+
+    pub fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
+        unsafe {
+            // Initialize COM
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            )
+            .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
+
+            // Get default output device
+            let default_output_id = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .ok()
+                .and_then(|d| d.GetId().ok().map(|id| id.to_string().unwrap_or_default()));
+
+            // Get default input device
+            let default_input_id = enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .ok()
+                .and_then(|d| d.GetId().ok().map(|id| id.to_string().unwrap_or_default()));
+
+            let mut devices = enumerate_devices(&enumerator, eRender, "playback", &default_output_id);
+            devices.extend(enumerate_devices(&enumerator, eCapture, "recording", &default_input_id));
 
             Ok(devices)
         }
     }
 
-    pub fn set_default_audio_device(device_id: &str) -> Result<(), String> {
+    pub fn set_default_audio_device(device_id: &str, _device_type: &str) -> Result<(), String> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
@@ -360,7 +392,7 @@ mod platform {
         Err("Audio device switching is not supported on this platform".to_string())
     }
 
-    pub fn set_default_audio_device(_device_id: &str) -> Result<(), String> {
+    pub fn set_default_audio_device(_device_id: &str, _device_type: &str) -> Result<(), String> {
         Err("Audio device switching is not supported on this platform".to_string())
     }
 }

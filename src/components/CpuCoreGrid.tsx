@@ -9,9 +9,13 @@ interface CoreData {
 interface CpuCoreGridProps {
   cores: CoreData[];
   maxTemp: number;
+  temperatureUnit?: "celsius" | "fahrenheit";
 }
 
-export function CpuCoreGrid({ cores, maxTemp }: CpuCoreGridProps) {
+export function CpuCoreGrid({ cores, maxTemp, temperatureUnit = "celsius" }: CpuCoreGridProps) {
+  const isFahrenheit = temperatureUnit === "fahrenheit";
+  const toUnit = (c: number) => isFahrenheit ? Math.round(c * 9 / 5 + 32) : Math.round(c);
+  const tempUnit = isFahrenheit ? "°F" : "°C";
   const getTemperatureColor = (temp: number): string => {
     const ratio = temp / maxTemp;
     if (ratio >= 0.9) return "var(--hud-danger)";
@@ -42,7 +46,7 @@ export function CpuCoreGrid({ cores, maxTemp }: CpuCoreGridProps) {
               className="core-temp-value"
               style={{ color: getTemperatureColor(core.temperature) }}
             >
-              {Math.round(core.temperature)}°
+              {toUnit(core.temperature)}{tempUnit}
             </span>
           </div>
         ))}

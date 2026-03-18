@@ -34,10 +34,11 @@ interface HudWidgetProps {
   hiddenSections: SectionType[];
   onHiddenSectionsChange: (hidden: SectionType[]) => void;
   audioDevices: AudioDevice[];
-  onSwitchAudioDevice: (deviceId: string) => void;
+  onSwitchAudioDevice: (deviceId: string, deviceType: "playback" | "recording") => void;
   audioSwitching?: boolean;
   miniMode?: boolean;
   compactMode?: boolean;
+  temperatureUnit?: "celsius" | "fahrenheit";
 }
 
 export function HudWidget({
@@ -55,6 +56,7 @@ export function HudWidget({
   audioSwitching,
   miniMode,
   compactMode,
+  temperatureUnit = "celsius",
 }: HudWidgetProps) {
   const [showCpuCores, setShowCpuCores] = useState(() => {
     try {
@@ -80,6 +82,10 @@ export function HudWidget({
   const sectionRefs = useRef<Map<SectionType, HTMLDivElement>>(new Map());
   const trashZoneRef = useRef<HTMLDivElement | null>(null);
   const { cpu, gpu } = hardwareData;
+  const isFahrenheit = temperatureUnit === "fahrenheit";
+  const toUnit = (c: number) => isFahrenheit ? Math.round(c * 9 / 5 + 32) : Math.round(c);
+  const tempUnit = isFahrenheit ? "°F" : "°C";
+  const toMax = (c: number) => isFahrenheit ? c * 9 / 5 + 32 : c;
 
   // Keep visualOrderRef in sync with sectionOrder when not dragging
   useEffect(() => {
@@ -351,7 +357,7 @@ export function HudWidget({
           </span>
           {collapsed && (
             <div className="collapsed-values">
-              <span className="collapsed-val">{cpu.temperature}<span className="collapsed-val-unit">°</span></span>
+              <span className="collapsed-val">{toUnit(cpu.temperature)}<span className="collapsed-val-unit">{tempUnit}</span></span>
               <span className="collapsed-val">{Math.round(cpu.load)}<span className="collapsed-val-unit">%</span></span>
             </div>
           )}
@@ -366,8 +372,9 @@ export function HudWidget({
           <>
             <div className="hud-metrics">
               <TemperatureGauge
-                value={cpu.temperature}
-                max={cpu.maxTemperature}
+                value={toUnit(cpu.temperature)}
+                max={toMax(cpu.maxTemperature)}
+                unit={tempUnit}
                 status={getTemperatureStatus(cpu.temperature, cpu.maxTemperature)}
                 label="TEMP"
               />
@@ -394,7 +401,7 @@ export function HudWidget({
             )}
 
             {showCpuCores && cpu.cores && cpu.cores.length > 0 && (
-              <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} />
+              <CpuCoreGrid cores={cpu.cores} maxTemp={cpu.maxTemperature} temperatureUnit={temperatureUnit} />
             )}
             {cpu.cores && cpu.cores.length > 0 && (
               <div
@@ -428,7 +435,7 @@ export function HudWidget({
           </span>
           {collapsed && (
             <div className="collapsed-values">
-              <span className="collapsed-val">{gpu.temperature}<span className="collapsed-val-unit">°</span></span>
+              <span className="collapsed-val">{toUnit(gpu.temperature)}<span className="collapsed-val-unit">{tempUnit}</span></span>
               <span className="collapsed-val">{Math.round(gpu.load)}<span className="collapsed-val-unit">%</span></span>
             </div>
           )}
@@ -443,8 +450,9 @@ export function HudWidget({
           <>
             <div className="hud-metrics">
               <TemperatureGauge
-                value={gpu.temperature}
-                max={gpu.maxTemperature}
+                value={toUnit(gpu.temperature)}
+                max={toMax(gpu.maxTemperature)}
+                unit={tempUnit}
                 status={getTemperatureStatus(gpu.temperature, gpu.maxTemperature)}
                 label="TEMP"
               />
@@ -517,7 +525,7 @@ export function HudWidget({
             <div className="collapsed-values">
               {hardwareData.storage.map((drive, i) => (
                 <span key={i} className="collapsed-val">
-                  {drive.temperature > 0 && <>{drive.temperature}<span className="collapsed-val-unit">°</span>{" "}</>}
+                  {drive.temperature > 0 && <>{toUnit(drive.temperature)}<span className="collapsed-val-unit">{tempUnit}</span>{" "}</>}
                   {Math.round(drive.usedSpace)}<span className="collapsed-val-unit">%</span>
                 </span>
               ))}
@@ -546,8 +554,9 @@ export function HudWidget({
               <div className="hud-metrics">
                 {drive.temperature > 0 ? (
                   <TemperatureGauge
-                    value={drive.temperature}
-                    max={70}
+                    value={toUnit(drive.temperature)}
+                    max={toMax(70)}
+                    unit={tempUnit}
                     status={getTemperatureStatus(drive.temperature, 70)}
                     label="TEMP"
                   />
@@ -605,7 +614,7 @@ export function HudWidget({
           {collapsed && (
             <div className="collapsed-values">
               {hardwareData.motherboard.temperature > 0 && (
-                <span className="collapsed-val">{Math.round(hardwareData.motherboard.temperature)}<span className="collapsed-val-unit">°</span></span>
+                <span className="collapsed-val">{toUnit(hardwareData.motherboard.temperature)}<span className="collapsed-val-unit">{tempUnit}</span></span>
               )}
               {hardwareData.motherboard.fans.length > 0 && (
                 <span className="collapsed-val">{hardwareData.motherboard.fans[0].speed}<span className="collapsed-val-unit">RPM</span></span>
@@ -619,8 +628,9 @@ export function HudWidget({
           <div className="hud-metrics">
             {hardwareData.motherboard.temperature > 0 ? (
               <TemperatureGauge
-                value={hardwareData.motherboard.temperature}
-                max={80}
+                value={toUnit(hardwareData.motherboard.temperature)}
+                max={toMax(80)}
+                unit={tempUnit}
                 status={getTemperatureStatus(hardwareData.motherboard.temperature, 80)}
                 label="TEMP"
               />
@@ -654,40 +664,66 @@ export function HudWidget({
     );
   };
 
+  const renderAudioDeviceSelect = (
+    devices: AudioDevice[],
+    deviceType: "playback" | "recording",
+    label: string,
+  ) => {
+    const defaultDevice = devices.find((d) => d.is_default);
+    return (
+      <div className="audio-subsection">
+        <span className="audio-subsection-label">{label}</span>
+        <div className="audio-select-wrapper">
+          <select
+            className="audio-device-select"
+            value={defaultDevice?.id ?? ""}
+            onChange={(e) => onSwitchAudioDevice(e.target.value, deviceType)}
+            onPointerDown={(e) => e.stopPropagation()}
+            disabled={audioSwitching || devices.length === 0}
+          >
+            {devices.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.name}
+              </option>
+            ))}
+            {devices.length === 0 && (
+              <option value="">No devices found</option>
+            )}
+          </select>
+          {audioSwitching && (
+            <span className="audio-switching-indicator">⟳</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderAudioSection = () => {
-    const defaultDevice = audioDevices.find((d) => d.is_default);
+    const collapsed = collapsedSections.has("audio");
+    const playbackDevices = audioDevices.filter((d) => d.device_type === "playback");
+    const recordingDevices = audioDevices.filter((d) => d.device_type === "recording");
+    const defaultPlayback = playbackDevices.find((d) => d.is_default);
     return (
       <>
-        <div className="hud-section-header">
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("audio")}
+          style={{ cursor: "pointer" }}
+        >
           <div className="section-indicator audio" />
           <span className="section-label">AUDIO</span>
-          <span className="section-name" title={defaultDevice?.name ?? "No device"}>
-            {defaultDevice?.name ?? "No device"}
+          <span className="section-name" title={defaultPlayback?.name ?? "No device"}>
+            {defaultPlayback?.name ?? "No device"}
           </span>
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
         </div>
-        <div className="hud-metrics">
-          <div className="audio-select-wrapper">
-            <select
-              className="audio-device-select"
-              value={defaultDevice?.id ?? ""}
-              onChange={(e) => onSwitchAudioDevice(e.target.value)}
-              onPointerDown={(e) => e.stopPropagation()}
-              disabled={audioSwitching || audioDevices.length === 0}
-            >
-              {audioDevices.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-              {audioDevices.length === 0 && (
-                <option value="">No devices found</option>
-              )}
-            </select>
-            {audioSwitching && (
-              <span className="audio-switching-indicator">⟳</span>
-            )}
-          </div>
-        </div>
+
+        {!collapsed && (
+          <>
+            {renderAudioDeviceSelect(playbackDevices, "playback", "PLAYBACK")}
+            {renderAudioDeviceSelect(recordingDevices, "recording", "RECORDING")}
+          </>
+        )}
       </>
     );
   };
@@ -789,7 +825,7 @@ export function HudWidget({
       <div className={`section-indicator ${type}`} />
       <span className="mini-label">{label}</span>
       <span className="mini-temp">
-        {temp !== null && temp > 0 ? <>{Math.round(temp)}<span className="mini-unit">°</span></> : "—"}
+        {temp !== null && temp > 0 ? <>{toUnit(temp)}<span className="mini-unit">{tempUnit}</span></> : "—"}
       </span>
       <span className="mini-divider">|</span>
       <div className="mini-bar">
