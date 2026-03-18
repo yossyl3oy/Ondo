@@ -130,7 +130,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             } else {
                 let mon = guard.as_mut().unwrap();
                 let elapsed = mon.last_refresh.elapsed().as_secs_f64();
-                mon.networks.refresh();
+                mon.networks.refresh(true);
                 mon.last_refresh = std::time::Instant::now();
                 collect_network_data(&mon.networks, elapsed)
             }

@@ -203,11 +203,12 @@ mod platform {
 #[cfg(target_os = "windows")]
 mod platform {
     use super::AudioDevice;
-    use windows::core::{GUID, HRESULT, PCWSTR, PROPVARIANT};
+    use windows::core::{GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
     use windows::Win32::Media::Audio::*;
     use windows::Win32::System::Com::*;
-    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::Foundation::PROPERTYKEY;
 
     // IPolicyConfig is an undocumented COM interface used to set default audio device
     #[windows::core::interface("f8679f50-850a-41cf-9c72-430f290290c8")]
