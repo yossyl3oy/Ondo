@@ -220,7 +220,7 @@ function App() {
   return (
     <div
       className={`app-container${miniMode ? " mini" : ""}`}
-      style={{ opacity: miniMode && cursorNear ? (settings.opacity / 100) * 0.1 : settings.opacity / 100 }}
+      style={{ opacity: miniMode ? (cursorNear ? (settings.opacity / 100) * 0.1 : (settings.opacity / 100) * 0.5) : settings.opacity / 100 }}
     >
       {!miniMode && <div className="scanlines" />}
       <HudWidget
