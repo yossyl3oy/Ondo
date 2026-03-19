@@ -158,12 +158,15 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             return false;
         }
 
+        // Get Ondo's window handle for monitor comparison
+        let ondo_hwnd = app
+            .get_webview_window("main")
+            .and_then(|w| w.hwnd().ok());
+
         // Skip if the foreground window is Ondo itself
-        if let Some(window) = app.get_webview_window("main") {
-            if let Ok(hwnd) = window.hwnd() {
-                if fg.0 as isize == hwnd.0 as isize {
-                    return false;
-                }
+        if let Some(hwnd) = ondo_hwnd {
+            if fg.0 as isize == hwnd.0 as isize {
+                return false;
             }
         }
 
@@ -173,6 +176,18 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         if len > 0 {
             let class_name = String::from_utf16_lossy(&class_buf[..len]);
             if class_name == "Progman" || class_name == "WorkerW" {
+                return false;
+            }
+        }
+
+        // Determine which monitor the foreground window is on
+        let fg_monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+
+        // Only trigger mini mode if the foreground window is on the same monitor as Ondo
+        if let Some(hwnd) = ondo_hwnd {
+            let ondo_monitor =
+                MonitorFromWindow(windows::Win32::Foundation::HWND(hwnd.0), MONITOR_DEFAULTTONEAREST);
+            if fg_monitor != ondo_monitor {
                 return false;
             }
         }
@@ -189,10 +204,9 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             return false;
         }
 
-        let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if !GetMonitorInfoW(monitor, &mut mi).as_bool() {
+        if !GetMonitorInfoW(fg_monitor, &mut mi).as_bool() {
             return false;
         }
 
@@ -209,21 +223,17 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
 // to check if the frontmost window covers the full screen.
 
 #[cfg(target_os = "macos")]
-fn is_foreground_maximized(_app: &AppHandle) -> bool {
+fn is_foreground_maximized(app: &AppHandle) -> bool {
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
 
-    // Get main display size
-    let (screen_w, screen_h) = unsafe {
-        let display = CGMainDisplayID();
-        (
-            CGDisplayPixelsWide(display) as f64,
-            CGDisplayPixelsHigh(display) as f64,
-        )
-    };
+    // Get Ondo window position to determine which display it's on
+    let ondo_pos = app
+        .get_webview_window("main")
+        .and_then(|w| w.outer_position().ok());
 
     // Get on-screen window list (excludes desktop elements)
     let list_ptr = unsafe {
@@ -265,24 +275,82 @@ fn is_foreground_maximized(_app: &AppHandle) -> bool {
 
         // Read window bounds
         let bounds_key = CFString::new("kCGWindowBounds");
-        if let Some(bounds_val) = dict.find(&bounds_key) {
-            let bounds_dict: CFDictionary<CFString, CFType> =
-                unsafe { CFDictionary::wrap_under_get_rule(bounds_val.as_CFTypeRef() as _) };
+        let Some(bounds_val) = dict.find(&bounds_key) else {
+            continue;
+        };
+        let bounds_dict: CFDictionary<CFString, CFType> =
+            unsafe { CFDictionary::wrap_under_get_rule(bounds_val.as_CFTypeRef() as _) };
 
-            let w = cf_dict_get_f64(&bounds_dict, "Width").unwrap_or(0.0);
-            let h = cf_dict_get_f64(&bounds_dict, "Height").unwrap_or(0.0);
+        let x = cf_dict_get_f64(&bounds_dict, "X").unwrap_or(0.0);
+        let y = cf_dict_get_f64(&bounds_dict, "Y").unwrap_or(0.0);
+        let w = cf_dict_get_f64(&bounds_dict, "Width").unwrap_or(0.0);
+        let h = cf_dict_get_f64(&bounds_dict, "Height").unwrap_or(0.0);
 
-            // If the frontmost normal-layer window covers >=95% of the screen → maximized
-            if w >= screen_w * 0.95 && h >= screen_h * 0.90 {
-                return true;
+        // Find which display this window is on
+        let win_center_x = x + w / 2.0;
+        let win_center_y = y + h / 2.0;
+        let fg_display = display_containing_point(win_center_x, win_center_y);
+
+        // Get the display size for the window's display
+        let (screen_w, screen_h) = if fg_display != 0 {
+            unsafe {
+                (
+                    CGDisplayPixelsWide(fg_display) as f64,
+                    CGDisplayPixelsHigh(fg_display) as f64,
+                )
+            }
+        } else {
+            unsafe {
+                let d = CGMainDisplayID();
+                (
+                    CGDisplayPixelsWide(d) as f64,
+                    CGDisplayPixelsHigh(d) as f64,
+                )
+            }
+        };
+
+        // Skip small windows (menus, popups, dropdowns) — they don't represent
+        // the actual app window state. Continue checking windows behind them.
+        if w < screen_w * 0.50 || h < screen_h * 0.50 {
+            continue;
+        }
+
+        // Only trigger mini mode if the window is on the same display as Ondo
+        if let Some(pos) = &ondo_pos {
+            let ondo_display =
+                display_containing_point(pos.x as f64, pos.y as f64);
+            if fg_display != ondo_display {
+                return false; // Different display — not relevant
             }
         }
 
-        // Only inspect the topmost normal-layer window
+        // If the window covers >=95% of the screen → maximized
+        if w >= screen_w * 0.95 && h >= screen_h * 0.90 {
+            return true;
+        }
+
+        // Found a large non-maximized window — no need to check further
         break;
     }
 
     false
+}
+
+/// Find the display that contains the given point.
+/// Returns the CGDirectDisplayID, or 0 if not found.
+#[cfg(target_os = "macos")]
+fn display_containing_point(x: f64, y: f64) -> u32 {
+    unsafe {
+        let point = CGPoint { x, y };
+        let mut display_id: u32 = 0;
+        let mut count: u32 = 0;
+        let err = CGGetDisplaysWithPoint(point, 1, &mut display_id, &mut count);
+        if err == 0 && count > 0 {
+            display_id
+        } else {
+            0
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -312,6 +380,7 @@ const CG_NULL_WINDOW_ID: u32 = 0;
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct CGPoint {
     x: f64,
     y: f64,
@@ -329,6 +398,12 @@ extern "C" {
     fn CGDisplayPixelsHigh(display: u32) -> usize;
     fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
     fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
+    fn CGGetDisplaysWithPoint(
+        point: CGPoint,
+        max_displays: u32,
+        displays: *mut u32,
+        matching_display_count: *mut u32,
+    ) -> i32;
 }
 
 #[cfg(target_os = "macos")]
