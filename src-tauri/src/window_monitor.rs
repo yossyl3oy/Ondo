@@ -149,7 +149,8 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
     use windows::Win32::Graphics::Gdi::MonitorFromWindow;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindowRect, IsZoomed,
+        GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
+        IsZoomed, GWL_STYLE, GW_OWNER, WS_POPUP,
     };
 
     unsafe {
@@ -180,10 +181,31 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             }
         }
 
-        // Determine which monitor the foreground window is on
-        let fg_monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        // If the foreground window is a popup (e.g. menu, dropdown, tooltip),
+        // check its owner window instead. This prevents mini mode from toggling
+        // off when a maximized app opens a submenu or context menu.
+        let mut target = fg;
+        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+        if (style & WS_POPUP.0) != 0 {
+            let owner = GetWindow(fg, GW_OWNER);
+            if let Ok(owner) = owner {
+                if owner.0 != std::ptr::null_mut() {
+                    target = owner;
+                }
+            }
+        }
 
-        // Only trigger mini mode if the foreground window is on the same monitor as Ondo
+        // Skip if the target window is Ondo itself
+        if let Some(hwnd) = ondo_hwnd {
+            if target.0 as isize == hwnd.0 as isize {
+                return false;
+            }
+        }
+
+        // Determine which monitor the target window is on
+        let fg_monitor = MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST);
+
+        // Only trigger mini mode if the target window is on the same monitor as Ondo
         if let Some(hwnd) = ondo_hwnd {
             let ondo_monitor =
                 MonitorFromWindow(windows::Win32::Foundation::HWND(hwnd.0), MONITOR_DEFAULTTONEAREST);
@@ -193,14 +215,14 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         }
 
         // Check Win32 maximized state first
-        if IsZoomed(fg).as_bool() {
+        if IsZoomed(target).as_bool() {
             return true;
         }
 
         // Also detect fullscreen windows (e.g. video players) by checking if
         // the window covers the entire monitor
         let mut win_rect = std::mem::zeroed();
-        if GetWindowRect(fg, &mut win_rect).is_err() {
+        if GetWindowRect(target, &mut win_rect).is_err() {
             return false;
         }
 
