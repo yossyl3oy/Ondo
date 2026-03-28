@@ -171,14 +171,27 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             }
         }
 
-        // Skip the desktop window (wallpaper click makes Progman/WorkerW foreground)
+        // Skip shell windows that should not affect mini mode:
+        // - Progman / WorkerW: desktop wallpaper
+        // - Shell_TrayWnd: primary taskbar
+        // - Shell_SecondaryTrayWnd: secondary-monitor taskbar
         let mut class_buf = [0u16; 64];
         let len = GetClassNameW(fg, &mut class_buf) as usize;
         if len > 0 {
             let class_name = String::from_utf16_lossy(&class_buf[..len]);
-            if class_name == "Progman" || class_name == "WorkerW" {
-                return false;
+            if class_name == "Progman"
+                || class_name == "WorkerW"
+                || class_name == "Shell_TrayWnd"
+                || class_name == "Shell_SecondaryTrayWnd"
+            {
+                return LAST_STATE.load(Ordering::Relaxed);
             }
+        }
+
+        // Skip all explorer.exe windows (taskbar, start menu, notifications,
+        // XAML-based shell elements on Windows 11, etc.)
+        if is_explorer_process(fg) {
+            return LAST_STATE.load(Ordering::Relaxed);
         }
 
         // If the foreground window is a popup (e.g. menu, dropdown, tooltip),
@@ -237,6 +250,41 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             && win_rect.top <= scr.top
             && win_rect.right >= scr.right
             && win_rect.bottom >= scr.bottom
+    }
+}
+
+/// Check if the given window belongs to explorer.exe.
+#[cfg(target_os = "windows")]
+fn is_explorer_process(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    unsafe {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return false;
+        }
+
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let result = if QueryFullProcessImageNameW(handle, PROCESS_NAME_FORMAT(0), windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            let lower = path.to_ascii_lowercase();
+            lower.ends_with("\\explorer.exe") || lower.ends_with("/explorer.exe")
+        } else {
+            false
+        };
+        let _ = CloseHandle(handle);
+        result
     }
 }
 
