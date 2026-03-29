@@ -53,6 +53,12 @@ export interface HardwareData {
     receivedPerSec: number; // bytes/sec
     sentPerSec: number; // bytes/sec
   }> | null;
+  display: {
+    name: string | null; // Monitor model name
+    refreshRate: number; // Hz
+    fps: number | null;
+    fpsProcessName: string | null;
+  } | null;
   timestamp: number;
   cpuError?: string;
   gpuError?: string;
@@ -92,11 +98,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   temperatureUnit: "celsius",
   compactMode: false,
   debugServer: false,
-  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio"],
+  sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio", "display"],
   hiddenSections: [],
 };
 
-export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio" | "network";
+export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio" | "network" | "display";
 
 export interface AudioDevice {
   id: string;

@@ -16,6 +16,7 @@ const INITIAL_DATA: HardwareData = {
   storage: null,
   motherboard: null,
   network: null,
+  display: null,
   timestamp: Date.now(),
 };
 
@@ -165,6 +166,12 @@ function generateMockData(): HardwareData {
         sentPerSec: Math.round(Math.random() * 1_000_000),
       },
     ],
+    display: {
+      name: "DELL U2723QE",
+      refreshRate: 144,
+      fps: 90 + Math.round(Math.random() * 50),
+      fpsProcessName: "Game",
+    },
     timestamp: Date.now(),
   };
 }

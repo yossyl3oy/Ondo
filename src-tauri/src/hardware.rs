@@ -1,4 +1,4 @@
-use crate::{CpuCoreData, CpuData, GpuData, HardwareData, StorageData, MotherboardData, NetworkInterfaceData};
+use crate::{CpuCoreData, CpuData, DisplayData, GpuData, HardwareData, StorageData, MotherboardData, NetworkInterfaceData};
 
 #[cfg(target_os = "windows")]
 use crate::FanData;
@@ -102,6 +102,141 @@ struct NetworkMonitor {
 
 #[cfg(target_os = "windows")]
 static NETWORK_MONITOR: Mutex<Option<NetworkMonitor>> = Mutex::new(None);
+
+#[cfg(target_os = "windows")]
+fn get_display_info() -> Option<DisplayData> {
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
+        ENUM_CURRENT_SETTINGS,
+    };
+
+    let mut devmode: DEVMODEW = unsafe { std::mem::zeroed() };
+    devmode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+
+    let refresh_rate = unsafe {
+        let success = EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut devmode);
+        if success.as_bool() && devmode.dmDisplayFrequency > 0 {
+            devmode.dmDisplayFrequency
+        } else {
+            60
+        }
+    };
+
+    // Get monitor model name via EnumDisplayDevices (adapter → monitor)
+    let monitor_name = unsafe {
+        let mut adapter: DISPLAY_DEVICEW = std::mem::zeroed();
+        adapter.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+        // Find the first active adapter
+        let mut name: Option<String> = None;
+        let mut i: u32 = 0;
+        while EnumDisplayDevicesW(None, i, &mut adapter, 0).as_bool() {
+            // Check if adapter is active (attached to desktop)
+            if adapter.StateFlags & 0x1 != 0 {
+                // DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
+                // Query the monitor attached to this adapter
+                let adapter_name_ptr = adapter.DeviceName.as_ptr();
+                let mut monitor: DISPLAY_DEVICEW = std::mem::zeroed();
+                monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                if EnumDisplayDevicesW(
+                    windows::core::PCWSTR(adapter_name_ptr),
+                    0,
+                    &mut monitor,
+                    0,
+                )
+                .as_bool()
+                {
+                    let s = String::from_utf16_lossy(&monitor.DeviceString);
+                    let s = s.trim_end_matches('\0').trim().to_string();
+                    if !s.is_empty() && s != "Generic PnP Monitor" {
+                        name = Some(s);
+                        break;
+                    }
+                }
+            }
+            i += 1;
+        }
+        name
+    };
+
+    let (fps, fps_process_name) = match crate::fps_monitor::get_foreground_fps() {
+        Some((f, name)) => (Some(f), Some(name)),
+        None => (None, None),
+    };
+
+    Some(DisplayData {
+        name: monitor_name,
+        refresh_rate,
+        fps,
+        fps_process_name,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn get_display_info() -> Option<DisplayData> {
+    #[repr(C)]
+    struct CGDisplayMode {
+        _private: [u8; 0],
+    }
+
+    extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayCopyDisplayMode(display: u32) -> *const CGDisplayMode;
+        fn CGDisplayModeGetRefreshRate(mode: *const CGDisplayMode) -> f64;
+        fn CGDisplayModeRelease(mode: *const CGDisplayMode);
+    }
+
+    let refresh_rate = unsafe {
+        let display_id = CGMainDisplayID();
+        let mode = CGDisplayCopyDisplayMode(display_id);
+        if mode.is_null() {
+            60
+        } else {
+            let rate = CGDisplayModeGetRefreshRate(mode);
+            CGDisplayModeRelease(mode);
+            if rate > 0.0 { rate.round() as u32 } else { 60 }
+        }
+    };
+
+    // Get monitor name via system_profiler (cached — only runs once)
+    static MONITOR_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let monitor_name = MONITOR_NAME.get_or_init(|| {
+        std::process::Command::new("system_profiler")
+            .args(["SPDisplaysDataType", "-detailLevel", "basic"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.ends_with(':')
+                        && !trimmed.starts_with("Display")
+                        && !trimmed.starts_with("Graphics")
+                        && line.starts_with("        ")
+                        && !line.starts_with("          ")
+                    {
+                        let name = trimmed.trim_end_matches(':').to_string();
+                        if !name.is_empty() {
+                            return Some(name);
+                        }
+                    }
+                }
+                None
+            })
+    }).clone();
+
+    let (fps, fps_process_name) = match crate::fps_monitor::get_foreground_fps() {
+        Some((f, name)) => (Some(f), Some(name)),
+        None => (None, None),
+    };
+
+    Some(DisplayData {
+        name: monitor_name,
+        refresh_rate,
+        fps,
+        fps_process_name,
+    })
+}
 
 #[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
@@ -240,6 +375,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 storage,
                 motherboard,
                 network,
+                display: get_display_info(),
                 timestamp,
                 cpu_error: None,
                 gpu_error: None,
@@ -253,6 +389,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 storage: sysinfo_data.storage,
                 motherboard: None,
                 network,
+                display: get_display_info(),
                 timestamp,
                 cpu_error: None,
                 gpu_error: None,
@@ -1012,6 +1149,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             storage: if storage.is_empty() { None } else { Some(storage) },
             motherboard,
             network: if network_data.is_empty() { None } else { Some(network_data) },
+            display: get_display_info(),
             timestamp,
             cpu_error: None,
             gpu_error: None,

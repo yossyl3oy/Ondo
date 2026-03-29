@@ -8,6 +8,7 @@ const SECTION_LABELS: Record<SectionType, string> = {
   motherboard: "Motherboard",
   audio: "Audio",
   network: "Network",
+  display: "Display",
 };
 
 interface RestorePanelProps {

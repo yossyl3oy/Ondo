@@ -4,6 +4,7 @@
 mod audio;
 mod debug_server;
 mod error_reporting;
+mod fps_monitor;
 mod hardware;
 mod log_buffer;
 mod settings;
@@ -80,12 +81,23 @@ pub struct NetworkInterfaceData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplayData {
+    name: Option<String>, // Monitor model name
+    #[serde(rename = "refreshRate")]
+    refresh_rate: u32, // Hz
+    fps: Option<u32>,
+    #[serde(rename = "fpsProcessName")]
+    fps_process_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareData {
     cpu: Option<CpuData>,
     gpu: Option<GpuData>,
     storage: Option<Vec<StorageData>>,
     motherboard: Option<MotherboardData>,
     network: Option<Vec<NetworkInterfaceData>>,
+    display: Option<DisplayData>,
     timestamp: u64,
     #[serde(rename = "cpuError")]
     cpu_error: Option<String>,
@@ -597,6 +609,9 @@ fn main() {
             // Start window monitor for mini mode (detects maximized foreground windows)
             window_monitor::start_monitoring(app.handle().clone());
 
+            // Start FPS monitoring (ETW-based, requires admin on Windows)
+            fps_monitor::start();
+
             // Position window on startup
             if let Some(window) = app.get_webview_window("main") {
                 // Restore saved window state if available
@@ -647,7 +662,8 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    // Shutdown LHM daemon on app exit
+    // Shutdown LHM daemon and FPS monitor on app exit
+    fps_monitor::stop();
     hardware::shutdown_lhm_daemon();
 }
 

@@ -87,6 +87,9 @@ export function HudWidget({
   const tempUnit = isFahrenheit ? "°F" : "°C";
   const toMax = (c: number) => isFahrenheit ? c * 9 / 5 + 32 : c;
 
+  const displayFps = hardwareData.display?.fps ?? null;
+  const fpsProcessName = hardwareData.display?.fpsProcessName ?? null;
+
   // Keep visualOrderRef in sync with sectionOrder when not dragging
   useEffect(() => {
     if (!isDragging) {
@@ -162,6 +165,7 @@ export function HudWidget({
         case "motherboard": return !!hardwareData.motherboard;
         case "network": return !!hardwareData.network && hardwareData.network.length > 0;
         case "audio": return true;
+        case "display": return true;
         default: return false;
       }
     });
@@ -804,6 +808,68 @@ export function HudWidget({
     );
   };
 
+  const renderDisplaySection = () => {
+    const collapsed = collapsedSections.has("display");
+    const refreshRate = hardwareData.display?.refreshRate ?? null;
+    const fpsBarPercent = displayFps !== null && refreshRate
+      ? Math.min(Math.round((displayFps / refreshRate) * 100), 100)
+      : 0;
+    return (
+      <>
+        <div
+          className={`hud-section-header${collapsed ? " collapsed" : ""}`}
+          onClick={() => toggleCollapse("display")}
+          style={{ cursor: "pointer" }}
+        >
+          <div className="section-indicator display" />
+          <span className="section-label">DISPLAY</span>
+          <span className="section-name" title={hardwareData.display?.name ?? undefined}>
+            {hardwareData.display?.name ?? (refreshRate !== null ? `${refreshRate} Hz` : "")}
+          </span>
+          {collapsed && (
+            <div className="collapsed-values">
+              {displayFps !== null ? (
+                <span className="collapsed-val">{displayFps}<span className="collapsed-val-unit">FPS</span></span>
+              ) : (
+                <span className="collapsed-val">—<span className="collapsed-val-unit">FPS</span></span>
+              )}
+              {refreshRate !== null && (
+                <span className="collapsed-val">{refreshRate}<span className="collapsed-val-unit">Hz</span></span>
+              )}
+            </div>
+          )}
+          <span className="expand-icon">{collapsed ? "▸" : "▾"}</span>
+        </div>
+
+        {collapsed ? (
+          <div className="collapsed-bar">
+            <div className="collapsed-bar-fill display" style={{ width: `${fpsBarPercent}%` }} />
+          </div>
+        ) : (
+          <div className="display-metrics">
+            <div className="display-metric-item">
+              <span className="display-metric-label">{fpsProcessName ? `FPS · ${fpsProcessName}` : "FPS"}</span>
+              {displayFps !== null ? (
+                <span className="display-metric-value">{displayFps}</span>
+              ) : (
+                <span className="display-metric-value unavailable">N/A</span>
+              )}
+            </div>
+            {refreshRate !== null && (
+              <>
+                <div className="metric-divider" />
+                <div className="display-metric-item">
+                  <span className="display-metric-label">REFRESH RATE</span>
+                  <span className="display-metric-value">{refreshRate}<span className="display-metric-unit"> Hz</span></span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </>
+    );
+  };
+
   const sectionRenderers: Record<SectionType, () => React.ReactNode> = {
     cpu: renderCpuSection,
     gpu: renderGpuSection,
@@ -811,6 +877,7 @@ export function HudWidget({
     motherboard: renderMotherboardSection,
     audio: renderAudioSection,
     network: renderNetworkSection,
+    display: renderDisplaySection,
   };
 
   // ── Mini mode: compact 1-line per section ──────────────────────────────
@@ -877,6 +944,21 @@ export function HudWidget({
               </div>
             );
           }
+          break;
+        case "display":
+          rows.push(
+            <div key="display" className="mini-row display">
+              <div className="section-indicator display" />
+              <span className="mini-label">FPS</span>
+              <span className="mini-temp">{displayFps !== null ? displayFps : "—"}</span>
+              {hardwareData.display && (
+                <>
+                  <span className="mini-divider">|</span>
+                  <span className="mini-temp">{hardwareData.display.refreshRate}<span className="mini-unit">Hz</span></span>
+                </>
+              )}
+            </div>
+          );
           break;
         // audio is omitted in mini mode
       }
