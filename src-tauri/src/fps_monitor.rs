@@ -46,6 +46,46 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 static FRAME_TIMES: Mutex<Option<HashMap<u32, VecDeque<Instant>>>> = Mutex::new(None);
 
 // ---------------------------------------------------------------------------
+// ETW consumer APIs — not available in the `windows` crate 0.62,
+// so we declare them via raw FFI from advapi32/sechost.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+const PROCESS_TRACE_MODE_REAL_TIME: u32 = 0x0000_0100;
+#[cfg(target_os = "windows")]
+const PROCESS_TRACE_MODE_EVENT_RECORD: u32 = 0x1000_0000;
+#[cfg(target_os = "windows")]
+const INVALID_PROCESSTRACE_HANDLE: u64 = u64::MAX;
+
+// EVENT_TRACE_LOGFILEW field offsets on x86-64:
+//   0: LogFileName        (ptr,  8)
+//   8: LoggerName         (ptr,  8)
+//  28: ProcessTraceMode   (u32,  4)  [Anonymous1 union]
+// 424: EventRecordCallback(ptr,  8)  [Anonymous2 union]
+// Total struct size ≈ 448 bytes; we use 512 for safety.
+#[cfg(target_os = "windows")]
+const LOGFILE_BUF_SIZE: usize = 512;
+#[cfg(target_os = "windows")]
+const OFF_LOGGER_NAME: usize = 8;
+#[cfg(target_os = "windows")]
+const OFF_PROCESS_TRACE_MODE: usize = 28;
+#[cfg(target_os = "windows")]
+const OFF_EVENT_RECORD_CALLBACK: usize = 424;
+
+#[cfg(target_os = "windows")]
+#[link(name = "advapi32")]
+extern "system" {
+    fn OpenTraceW(logfile: *mut u8) -> u64;
+    fn ProcessTrace(
+        handle_array: *const u64,
+        handle_count: u32,
+        start_time: *const i64,
+        end_time: *const i64,
+    ) -> u32;
+    fn CloseTrace(trace_handle: u64) -> u32;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -118,7 +158,7 @@ fn run_etw_session() -> Result<(), String> {
     unsafe {
         // --- Allocate EVENT_TRACE_PROPERTIES + trailing session name buffer ---
         let props_base = std::mem::size_of::<EVENT_TRACE_PROPERTIES>();
-        let name_bytes = session_wide.len() * 2; // u16 → bytes
+        let name_bytes = session_wide.len() * 2;
         let total = props_base + name_bytes;
         let mut buffer = vec![0u8; total];
         let props = &mut *(buffer.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES);
@@ -136,26 +176,37 @@ fn run_etw_session() -> Result<(), String> {
             PCWSTR(session_wide.as_ptr()),
             props,
         )
+        .ok()
         .map_err(|e| format!("StartTraceW failed: {e}"))?;
 
         // --- Enable providers ---
         enable_provider(session_handle, &DXGI_PROVIDER)?;
         let _ = enable_provider(session_handle, &D3D9_PROVIDER); // D3D9 is optional
 
-        // --- Open trace for real-time consumption ---
-        let mut logfile: EVENT_TRACE_LOGFILEW = std::mem::zeroed();
-        logfile.LoggerName = PWSTR(session_wide.as_ptr() as *mut u16);
-        logfile.Anonymous1.ProcessTraceMode =
-            PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
-        logfile.Anonymous2.EventRecordCallback = Some(event_record_callback);
+        // --- Open trace for real-time consumption (raw FFI) ---
+        let mut logfile_buf = vec![0u8; LOGFILE_BUF_SIZE];
+        let p = logfile_buf.as_mut_ptr();
 
-        let trace_handle = OpenTraceW(&mut logfile)
-            .map_err(|e| format!("OpenTraceW failed: {e}"))?;
+        // LoggerName (offset 8): pointer to wide session name
+        *(p.add(OFF_LOGGER_NAME) as *mut *const u16) = session_wide.as_ptr();
+
+        // ProcessTraceMode (offset 28)
+        *(p.add(OFF_PROCESS_TRACE_MODE) as *mut u32) =
+            PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+
+        // EventRecordCallback (offset 424)
+        *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) =
+            event_record_callback as usize;
+
+        let trace_handle = OpenTraceW(p);
+        if trace_handle == INVALID_PROCESSTRACE_HANDLE {
+            return Err("OpenTraceW failed (admin privileges may be required)".into());
+        }
 
         // ProcessTrace blocks until the session is stopped
-        let _ = ProcessTrace(&[trace_handle], None, None);
+        ProcessTrace(&trace_handle, 1, std::ptr::null(), std::ptr::null());
 
-        let _ = CloseTrace(trace_handle);
+        CloseTrace(trace_handle);
     }
 
     Ok(())
@@ -166,16 +217,18 @@ unsafe fn enable_provider(
     session: CONTROLTRACE_HANDLE,
     provider: &GUID,
 ) -> Result<(), String> {
+    // EVENT_CONTROL_CODE_ENABLE_PROVIDER = 1, TRACE_LEVEL_INFORMATION = 4
     EnableTraceEx2(
         session,
         provider,
-        EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
-        TRACE_LEVEL_INFORMATION.0 as u8,
+        1, // EVENT_CONTROL_CODE_ENABLE_PROVIDER
+        4, // TRACE_LEVEL_INFORMATION
         0xFFFF_FFFF_FFFF_FFFF, // MatchAnyKeyword – all
         0,
         0,
         None,
     )
+    .ok()
     .map_err(|e| format!("EnableTraceEx2 failed: {e}"))
 }
 

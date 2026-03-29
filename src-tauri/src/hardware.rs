@@ -132,7 +132,7 @@ fn get_display_info() -> Option<DisplayData> {
         let mut i: u32 = 0;
         while EnumDisplayDevicesW(None, i, &mut adapter, 0).as_bool() {
             // Check if adapter is active (attached to desktop)
-            if adapter.StateFlags & 0x1 != 0 {
+            if adapter.StateFlags.0 & 0x1 != 0 {
                 // DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
                 // Query the monitor attached to this adapter
                 let adapter_name_ptr = adapter.DeviceName.as_ptr();
