@@ -84,7 +84,7 @@ export function HudWidget({
   const { cpu, gpu } = hardwareData;
   const isFahrenheit = temperatureUnit === "fahrenheit";
   const toUnit = (c: number) => isFahrenheit ? Math.round(c * 9 / 5 + 32) : Math.round(c);
-  const tempUnit = isFahrenheit ? "°F" : "°C";
+  const tempUnit = isFahrenheit ? "℉" : "℃";
   const toMax = (c: number) => isFahrenheit ? c * 9 / 5 + 32 : c;
 
   const displayFps = hardwareData.display?.fps ?? null;

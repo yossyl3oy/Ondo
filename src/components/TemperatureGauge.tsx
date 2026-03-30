@@ -13,7 +13,7 @@ export function TemperatureGauge({
   max,
   status,
   label,
-  unit = "°C",
+  unit = "℃",
 }: TemperatureGaugeProps) {
   const isAvailable = value > 0;
   const percentage = isAvailable ? Math.min((value / max) * 100, 100) : 0;
