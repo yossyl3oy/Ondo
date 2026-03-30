@@ -82,9 +82,9 @@
 }
 
 .gauge-unit {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
-  letter-spacing: -0.5px;
+  letter-spacing: -1.5px;
 }
 
 .gauge-value.unavailable {
