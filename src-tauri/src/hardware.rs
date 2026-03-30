@@ -112,7 +112,7 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
         SetupDiGetClassDevsW, SetupDiEnumDeviceInfo, SetupDiOpenDevRegKey,
         SP_DEVINFO_DATA, DIGCF_PRESENT,
     };
-    use windows::Win32::System::Registry::RegQueryValueExW;
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
     use windows::Win32::Foundation::HWND;
 
     // GUID_DEVCLASS_MONITOR {4d36e96e-e325-11ce-bfc1-08002be10318}
@@ -158,7 +158,7 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
         SetupDiGetClassDevsW(
             Some(&monitor_class_guid),
             None,
-            HWND::default(),
+            Some(HWND::default()),
             DIGCF_PRESENT,
         ).ok()?
     };
@@ -211,14 +211,14 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
                 let edid_name: Vec<u16> = "EDID\0".encode_utf16().collect();
                 let mut edid_data = [0u8; 256];
                 let mut data_size: u32 = edid_data.len() as u32;
-                let mut reg_type: u32 = 0;
+                let mut reg_type = REG_VALUE_TYPE::default();
 
                 let result = unsafe {
                     RegQueryValueExW(
                         hkey,
                         windows::core::PCWSTR(edid_name.as_ptr()),
                         None,
-                        Some(&mut reg_type),
+                        Some(&mut reg_type as *mut REG_VALUE_TYPE),
                         Some(edid_data.as_mut_ptr()),
                         Some(&mut data_size),
                     )
@@ -259,8 +259,7 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
 #[cfg(target_os = "windows")]
 fn get_display_info() -> Option<DisplayData> {
     use windows::Win32::Graphics::Gdi::{
-        EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
-        ENUM_CURRENT_SETTINGS,
+        EnumDisplaySettingsW, DEVMODEW, ENUM_CURRENT_SETTINGS,
     };
 
     let mut devmode: DEVMODEW = unsafe { std::mem::zeroed() };
