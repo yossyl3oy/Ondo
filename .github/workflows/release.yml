@@ -63,6 +63,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate changelog
+        id: changelog
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          # Find the previous release tag
+          PREV_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          else
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          {
+            echo "commits<<EOF"
+            echo "$COMMITS"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Release
         id: create-release
         if: steps.check-release.outputs.exists == 'false'
@@ -75,14 +94,14 @@ jobs:
           body: |
             ## Ondo v${{ steps.get-version.outputs.version }}
 
-            Hardware temperature monitoring widget with Iron Man HUD-style interface.
+            A sleek, HUD-style hardware temperature monitoring widget.
 
             ### Downloads
             - **Windows**: Download the `.msi` or `.exe` installer
             - **macOS**: Download the `.dmg` file
 
             ### Changes
-            See commit history for details.
+            ${{ steps.changelog.outputs.commits }}
           draft: false
           prerelease: false
 

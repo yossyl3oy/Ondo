@@ -5,27 +5,14 @@
 [![License](https://img.shields.io/github/license/yossyl3oy/Ondo?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue?style=flat-square)]()
 
-An Iron Man HUD-style hardware temperature monitoring widget built with Tauri 2.
+A sleek, HUD-style hardware temperature monitoring widget.
 
-## Features
+## Why I made this
 
-- Real-time CPU & GPU temperature, load, and frequency monitoring
-- Per-core CPU temperature and load display
-- GPU VRAM usage monitoring
-- Storage (SSD/HDD) temperature and usage
-- Motherboard temperature and fan speeds
-- Network speed monitoring (download/upload) with live graph
-- Audio device switching
-- Drag-and-drop section reordering with hide/restore
-- Three display modes: Normal, Compact, and Mini
-- Screen edge docking with drag support
-- Semi-transparent, frameless HUD design
-- System theme sync (Auto/Dark/Light)
-- Boot sequence animation
-- System tray integration
-- Auto-start on system boot (configurable)
-- Auto-update support
-- Remote debug server for LAN diagnostics
+- Windows keeps switching my audio devices and resetting the refresh rate to 60Hz on its own, which is annoying — so I wanted a widget to keep an eye on things at all times
+- My CPU is an i9-14900KF that runs insanely hot, so I needed a way to monitor temperatures constantly
+
+This app is built around features I personally wanted. If there's something you'd like to see added, feel free to open an [Issue](https://github.com/yossyl3oy/Ondo/issues) and I'll look into it.
 
 ## Download
 
@@ -56,31 +43,13 @@ Download the latest release from the [Releases](https://github.com/yossyl3oy/Ond
 
 ### Windows
 
-Hardware data is retrieved via [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) running as a daemon process (`ondo-hwmon.exe`), communicating over stdout in JSON. Monitored sensors:
+Sensor data is retrieved via [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor). Falls back to `sysinfo` when unavailable.
 
-- **CPU**: Temperature, load, frequency (per-core)
-- **GPU**: Temperature, load, frequency, VRAM usage (NVIDIA / AMD / Intel)
-- **Storage**: Temperature, used space, total capacity
-- **Motherboard**: Temperature, fan speeds (RPM)
-- **Network**: Download/upload speed per adapter
-
-Falls back to `sysinfo` for basic data when LibreHardwareMonitor is unavailable.
-
-#### PawnIO Driver
-
-[PawnIO](https://github.com/namazso/PawnIO) is a modern, signed driver that replaces the legacy WinRing0 driver (blocked by Windows Defender since March 2025 due to CVE-2020-14979). The installer is bundled with Ondo.
-
-If sensors are not showing:
-1. Open Settings (gear icon)
-2. Click "Install PawnIO Driver"
-3. Accept the UAC prompt
-4. Restart Ondo
-
-PawnIO is licensed under GPL-2.0 and developed by [namazso](https://github.com/namazso/PawnIO).
+If the [PawnIO](https://github.com/namazso/PawnIO) driver is needed, it can be installed from the Settings screen.
 
 ### macOS
 
-Temperature data is retrieved using system APIs. Some sensors may not be available depending on hardware.
+Temperature data is retrieved via system APIs.
 
 ## Debug Server
 
@@ -113,34 +82,16 @@ curl -s "http://<WINDOWS_IP>:19210/logs/search?q=error&format=json"
 
 - **Frontend**: React 19 + TypeScript + Vite
 - **Backend**: Tauri 2 (Rust)
-- **Hardware Monitoring**:
-  - Windows: LibreHardwareMonitor (.NET 8, daemon mode) + sysinfo fallback
-  - macOS: System APIs
+- **Hardware**: LibreHardwareMonitor (.NET 8) / System APIs
 - **Package Manager**: pnpm (managed via [mise](https://mise.jdx.dev/))
-- **Error Tracking**: Sentry
 
 ## Development
-
-### Requirements
-
-- [mise](https://mise.jdx.dev/) (manages Node.js and pnpm)
-- Rust 1.70+
-- Tauri CLI 2.x
-- .NET 8 SDK (Windows only, for building `ondo-hwmon`)
-
-### Setup
 
 ```bash
 git clone https://github.com/yossyl3oy/Ondo.git
 cd Ondo
 pnpm install
 pnpm tauri dev
-```
-
-### Build
-
-```bash
-pnpm tauri build
 ```
 
 ## License

@@ -84,6 +84,7 @@
 .gauge-unit {
   font-size: 12px;
   font-weight: 400;
+  margin-left: 1px;
 }
 
 .gauge-value.unavailable {
