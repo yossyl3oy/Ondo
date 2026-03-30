@@ -824,7 +824,7 @@ export function HudWidget({
           <div className="section-indicator display" />
           <span className="section-label">DISPLAY</span>
           <span className="section-name" title={hardwareData.display?.name ?? undefined}>
-            {hardwareData.display?.name ?? (refreshRate !== null ? `${refreshRate} Hz` : "")}
+            {hardwareData.display?.name ?? ""}
           </span>
           {collapsed && (
             <div className="collapsed-values">

@@ -103,6 +103,159 @@ struct NetworkMonitor {
 #[cfg(target_os = "windows")]
 static NETWORK_MONITOR: Mutex<Option<NetworkMonitor>> = Mutex::new(None);
 
+/// Read the monitor model name from EDID data in the registry via SetupAPI.
+/// Identifies the primary monitor by matching the DeviceID from EnumDisplayDevices.
+#[cfg(target_os = "windows")]
+fn get_primary_monitor_name_from_edid() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
+    use windows::Win32::Devices::DeviceAndDriverInstallation::{
+        SetupDiGetClassDevsW, SetupDiEnumDeviceInfo, SetupDiOpenDevRegKey,
+        SP_DEVINFO_DATA, DIGCF_PRESENT,
+    };
+    use windows::Win32::System::Registry::RegQueryValueExW;
+    use windows::Win32::Foundation::HWND;
+
+    // GUID_DEVCLASS_MONITOR {4d36e96e-e325-11ce-bfc1-08002be10318}
+    let monitor_class_guid = windows::core::GUID::from_values(
+        0x4d36e96e, 0xe325, 0x11ce, [0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18],
+    );
+
+    // Step 1: Get the primary monitor's DeviceID from EnumDisplayDevices
+    let primary_device_id = unsafe {
+        let mut adapter: DISPLAY_DEVICEW = std::mem::zeroed();
+        adapter.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+        let mut device_id: Option<String> = None;
+        let mut i: u32 = 0;
+        while EnumDisplayDevicesW(None, i, &mut adapter, 0).as_bool() {
+            // DISPLAY_DEVICE_PRIMARY_DEVICE = 0x4
+            if adapter.StateFlags.0 & 0x4 != 0 {
+                let adapter_name_ptr = adapter.DeviceName.as_ptr();
+                let mut monitor: DISPLAY_DEVICEW = std::mem::zeroed();
+                monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                if EnumDisplayDevicesW(
+                    windows::core::PCWSTR(adapter_name_ptr),
+                    0,
+                    &mut monitor,
+                    0,
+                ).as_bool() {
+                    let id = String::from_utf16_lossy(&monitor.DeviceID);
+                    let id = id.trim_end_matches('\0').to_string();
+                    // Extract the monitor hardware ID portion (e.g., "MONITOR\DEL4265")
+                    if let Some(parts) = id.split('\\').nth(1) {
+                        device_id = Some(parts.to_uppercase());
+                    }
+                }
+                break;
+            }
+            i += 1;
+        }
+        device_id
+    };
+
+    // Step 2: Enumerate monitor devices via SetupAPI and find matching EDID
+    let dev_info = unsafe {
+        SetupDiGetClassDevsW(
+            Some(&monitor_class_guid),
+            None,
+            HWND::default(),
+            DIGCF_PRESENT,
+        ).ok()?
+    };
+
+    let mut dev_info_data = SP_DEVINFO_DATA {
+        cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
+        ..Default::default()
+    };
+
+    let mut idx: u32 = 0;
+    while unsafe { SetupDiEnumDeviceInfo(dev_info, idx, &mut dev_info_data).is_ok() } {
+        // Open the device's registry key
+        let hkey = unsafe {
+            SetupDiOpenDevRegKey(
+                dev_info,
+                &dev_info_data,
+                1, // DICS_FLAG_GLOBAL
+                0,
+                1, // DIREG_DEV
+                0x20019, // KEY_READ
+            ).ok()
+        };
+
+        if let Some(hkey) = hkey {
+            // Check if this device matches the primary monitor
+            let matches_primary = if let Some(ref target_id) = primary_device_id {
+                // Get the hardware ID of this device from instance ID
+                let mut instance_id = [0u16; 260];
+                let instance_str = if unsafe {
+                    windows::Win32::Devices::DeviceAndDriverInstallation::SetupDiGetDeviceInstanceIdW(
+                        dev_info,
+                        &dev_info_data,
+                        Some(&mut instance_id),
+                        None,
+                    ).is_ok()
+                } {
+                    let s = String::from_utf16_lossy(&instance_id);
+                    s.trim_end_matches('\0').to_uppercase()
+                } else {
+                    String::new()
+                };
+                instance_str.contains(target_id)
+            } else {
+                // No primary info available, take first one
+                true
+            };
+
+            if matches_primary {
+                // Read EDID value
+                let edid_name: Vec<u16> = "EDID\0".encode_utf16().collect();
+                let mut edid_data = [0u8; 256];
+                let mut data_size: u32 = edid_data.len() as u32;
+                let mut reg_type: u32 = 0;
+
+                let result = unsafe {
+                    RegQueryValueExW(
+                        hkey,
+                        windows::core::PCWSTR(edid_name.as_ptr()),
+                        None,
+                        Some(&mut reg_type),
+                        Some(edid_data.as_mut_ptr()),
+                        Some(&mut data_size),
+                    )
+                };
+
+                let _ = unsafe { windows::Win32::Foundation::CloseHandle(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(hkey)) };
+
+                if result.is_ok() && data_size >= 128 {
+                    // Parse EDID descriptor blocks (bytes 54-125, four 18-byte blocks)
+                    for block_start in (54..=108).step_by(18) {
+                        let block = &edid_data[block_start..block_start + 18];
+                        // Monitor name descriptor: bytes 0-2 are 0x00, byte 3 is 0xFC
+                        if block[0] == 0 && block[1] == 0 && block[2] == 0 && block[3] == 0xFC {
+                            let name_bytes = &block[5..18];
+                            let name: String = name_bytes
+                                .iter()
+                                .take_while(|&&b| b != 0x0A && b != 0x00)
+                                .map(|&b| b as char)
+                                .collect();
+                            let name = name.trim().to_string();
+                            if !name.is_empty() {
+                                return Some(name);
+                            }
+                        }
+                    }
+                }
+            } else {
+                let _ = unsafe { windows::Win32::Foundation::CloseHandle(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(hkey)) };
+            }
+        }
+
+        idx += 1;
+    }
+
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn get_display_info() -> Option<DisplayData> {
     use windows::Win32::Graphics::Gdi::{
@@ -122,42 +275,11 @@ fn get_display_info() -> Option<DisplayData> {
         }
     };
 
-    // Get monitor model name via EnumDisplayDevices (adapter → monitor)
-    let monitor_name = unsafe {
-        let mut adapter: DISPLAY_DEVICEW = std::mem::zeroed();
-        adapter.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
-
-        // Find the first active adapter
-        let mut name: Option<String> = None;
-        let mut i: u32 = 0;
-        while EnumDisplayDevicesW(None, i, &mut adapter, 0).as_bool() {
-            // Check if adapter is active (attached to desktop)
-            if adapter.StateFlags.0 & 0x1 != 0 {
-                // DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
-                // Query the monitor attached to this adapter
-                let adapter_name_ptr = adapter.DeviceName.as_ptr();
-                let mut monitor: DISPLAY_DEVICEW = std::mem::zeroed();
-                monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
-                if EnumDisplayDevicesW(
-                    windows::core::PCWSTR(adapter_name_ptr),
-                    0,
-                    &mut monitor,
-                    0,
-                )
-                .as_bool()
-                {
-                    let s = String::from_utf16_lossy(&monitor.DeviceString);
-                    let s = s.trim_end_matches('\0').trim().to_string();
-                    if !s.is_empty() && s != "Generic PnP Monitor" {
-                        name = Some(s);
-                        break;
-                    }
-                }
-            }
-            i += 1;
-        }
-        name
-    };
+    // Get monitor model name from EDID in registry (cached)
+    static MONITOR_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let monitor_name = MONITOR_NAME.get_or_init(|| {
+        get_primary_monitor_name_from_edid()
+    }).clone();
 
     let (fps, fps_process_name) = match crate::fps_monitor::get_foreground_fps() {
         Some((f, name)) => (Some(f), Some(name)),
