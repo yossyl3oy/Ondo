@@ -22,6 +22,7 @@ jobs:
       release_id: ${{ steps.create-release.outputs.id || steps.get-existing-release.outputs.id }}
       version: ${{ steps.get-version.outputs.version }}
       is_rebuild: ${{ steps.check-release.outputs.exists }}
+      skip: ${{ steps.check-version.outputs.skip }}
     steps:
       - uses: actions/checkout@v6
 
@@ -32,16 +33,17 @@ jobs:
       - name: Check if release exists and is complete
         id: check-release
         run: |
-          if gh release view "v${{ steps.get-version.outputs.version }}" > /dev/null 2>&1; then
+          CURRENT="v${{ steps.get-version.outputs.version }}"
+          if gh release view "$CURRENT" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            # Check if release has all expected assets (Windows .msi, macOS .dmg files)
-            ASSETS=$(gh release view "v${{ steps.get-version.outputs.version }}" --json assets -q '.assets[].name' 2>/dev/null || echo "")
-            if echo "$ASSETS" | grep -q "\.msi" && echo "$ASSETS" | grep -q "\.dmg"; then
+            # Check if release has all expected assets (Windows .nsis, macOS .dmg files)
+            ASSETS=$(gh release view "$CURRENT" --json assets -q '.assets[].name' 2>/dev/null || echo "")
+            if echo "$ASSETS" | grep -q "\.nsis" && echo "$ASSETS" | grep -q "\.dmg"; then
               echo "complete=true" >> $GITHUB_OUTPUT
-              echo "Release is complete with all assets"
+              echo "Release $CURRENT is complete with all assets"
             else
               echo "complete=false" >> $GITHUB_OUTPUT
-              echo "Release exists but is incomplete (missing assets)"
+              echo "Release $CURRENT exists but is incomplete (missing assets)"
             fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -50,9 +52,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine if build should be skipped
+        id: check-version
+        run: |
+          CURRENT="v${{ steps.get-version.outputs.version }}"
+          FORCE="${{ github.event.inputs.force_rebuild }}"
+          EXISTS="${{ steps.check-release.outputs.exists }}"
+          COMPLETE="${{ steps.check-release.outputs.complete }}"
+          # Skip only if release exists AND is complete AND not force rebuild
+          if [ "$EXISTS" = "true" ] && [ "$COMPLETE" = "true" ] && [ "$FORCE" != "true" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Release $CURRENT is complete, skipping build"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Will build: exists=$EXISTS complete=$COMPLETE force=$FORCE"
+          fi
+
       - name: Get existing release ID for rebuild
         id: get-existing-release
-        if: steps.check-release.outputs.exists == 'true' && (github.event.inputs.force_rebuild == 'true' || steps.check-release.outputs.complete == 'false')
+        if: steps.check-version.outputs.skip == 'false' && steps.check-release.outputs.exists == 'true'
         run: |
           RELEASE_ID=$(gh release view "v${{ steps.get-version.outputs.version }}" --json id -q '.id' 2>/dev/null || echo "")
           # GitHub CLI returns database ID, we need to get the release ID from API
@@ -65,7 +83,7 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        if: steps.check-release.outputs.exists == 'false'
+        if: steps.check-version.outputs.skip == 'false' && steps.check-release.outputs.exists != 'true'
         run: |
           # Find the previous release tag and fetch it
           PREV_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
@@ -87,7 +105,7 @@ jobs:
 
       - name: Create Release
         id: create-release
-        if: steps.check-release.outputs.exists == 'false'
+        if: steps.check-version.outputs.skip == 'false' && steps.check-release.outputs.exists != 'true'
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,8 +128,8 @@ jobs:
 
   build-tauri:
     needs: create-release
-    # Build if: new release created, force rebuild requested, or release is incomplete
-    if: needs.create-release.outputs.release_id != ''
+    # Build if: not skipped AND (new release created, force rebuild requested, or release is incomplete)
+    if: needs.create-release.outputs.skip != 'true' && needs.create-release.outputs.release_id != ''
     strategy:
       fail-fast: false
       matrix:
@@ -246,7 +264,7 @@ jobs:
 
   cleanup-old-releases:
     needs: [create-release, build-tauri]
-    if: always() && needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success' && needs.create-release.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Delete old releases (keep latest 3)
