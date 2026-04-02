@@ -25,6 +25,8 @@ jobs:
       skip: ${{ steps.check-version.outputs.skip }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Get version from package.json
         id: get-version
