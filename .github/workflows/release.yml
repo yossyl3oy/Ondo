@@ -36,9 +36,9 @@ jobs:
           CURRENT="v${{ steps.get-version.outputs.version }}"
           if gh release view "$CURRENT" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            # Check if release has all expected assets (Windows .nsis, macOS .dmg files)
+            # Check if release has all expected assets (Windows .exe, macOS .dmg files)
             ASSETS=$(gh release view "$CURRENT" --json assets -q '.assets[].name' 2>/dev/null || echo "")
-            if echo "$ASSETS" | grep -q "\.nsis" && echo "$ASSETS" | grep -q "\.dmg"; then
+            if echo "$ASSETS" | grep -q "setup\.exe" && echo "$ASSETS" | grep -q "\.dmg"; then
               echo "complete=true" >> $GITHUB_OUTPUT
               echo "Release $CURRENT is complete with all assets"
             else
