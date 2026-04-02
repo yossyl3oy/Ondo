@@ -1098,6 +1098,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
         let monitor = monitor_guard.as_mut().unwrap();
 
+        let was_initialized = monitor.initialized;
+
         // Refresh sensor data
         monitor.system.refresh_cpu_usage();
         monitor.components.refresh(true);
@@ -1106,8 +1108,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         monitor.networks.refresh(true);
         monitor.last_refresh = std::time::Instant::now();
 
-        // On first call, CPU usage is always 0% — mark as initialized for subsequent calls
-        if !monitor.initialized {
+        // Warm up the first sample so we don't divide the initial network delta by
+        // the near-zero time elapsed since monitor initialization.
+        if !was_initialized {
             monitor.initialized = true;
         }
 
@@ -1258,7 +1261,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         });
 
         // Network
-        let network_data = if monitor.initialized {
+        let network_data = if was_initialized {
             collect_network_data(&monitor.networks, net_elapsed)
         } else {
             Vec::new()

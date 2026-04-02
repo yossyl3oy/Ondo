@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuCoreData {
@@ -108,6 +109,7 @@ pub struct HardwareData {
 pub struct AppState {
     settings: Mutex<settings::AppSettings>,
     debug_server_running: AtomicBool,
+    debug_server_shutdown: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 #[tauri::command]
@@ -560,12 +562,22 @@ async fn toggle_debug_server(state: State<'_, AppState>, enabled: bool) -> Resul
     let was_running = state.debug_server_running.load(Ordering::SeqCst);
     if enabled && !was_running {
         state.debug_server_running.store(true, Ordering::SeqCst);
-        tauri::async_runtime::spawn(debug_server::start_debug_server());
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut shutdown = state.debug_server_shutdown.lock().map_err(|e| e.to_string())?;
+        *shutdown = Some(shutdown_tx);
+        drop(shutdown);
+        tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
     }
-    // Note: stopping a running server requires the server to check a shutdown signal.
-    // For now, disabling only prevents restart on next launch.
     if !enabled {
         state.debug_server_running.store(false, Ordering::SeqCst);
+        let shutdown = state
+            .debug_server_shutdown
+            .lock()
+            .map_err(|e| e.to_string())?
+            .take();
+        if let Some(shutdown_tx) = shutdown {
+            let _ = shutdown_tx.send(());
+        }
     }
     Ok(())
 }
@@ -594,6 +606,7 @@ fn main() {
         .manage(AppState {
             settings: Mutex::new(initial_settings),
             debug_server_running: AtomicBool::new(false),
+            debug_server_shutdown: Mutex::new(None),
         })
         .setup(move |app| {
             // Setup system tray
@@ -603,7 +616,11 @@ fn main() {
             if startup_debug_server {
                 let state = app.state::<AppState>();
                 state.debug_server_running.store(true, Ordering::SeqCst);
-                tauri::async_runtime::spawn(debug_server::start_debug_server());
+                let (shutdown_tx, shutdown_rx) = oneshot::channel();
+                if let Ok(mut shutdown) = state.debug_server_shutdown.lock() {
+                    *shutdown = Some(shutdown_tx);
+                }
+                tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
             }
 
             // Start window monitor for mini mode (detects maximized foreground windows)

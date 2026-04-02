@@ -19,6 +19,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showRestorePanel, setShowRestorePanel] = useState(false);
   const [showUpdateNotification, setShowUpdateNotification] = useState(true);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [miniMode, setMiniMode] = useState(false);
   const [cursorNear, setCursorNear] = useState(false);
@@ -27,6 +28,7 @@ function App() {
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
   const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
   const { devices: audioDevices, switching: audioSwitching, switchDevice: switchAudioDevice } = useAudioDevices();
+  const activeUpdateVersion = updateInfo?.available ? (updateInfo.version ?? "__unknown__") : null;
 
   // Update message based on update check result
   useEffect(() => {
@@ -40,6 +42,18 @@ function App() {
       setUpdateMessage("You're on the latest version");
     }
   }, [checking, updateInfo, updateError]);
+
+  useEffect(() => {
+    if (activeUpdateVersion) {
+      if (activeUpdateVersion !== dismissedUpdateVersion) {
+        setShowUpdateNotification(true);
+      }
+      return;
+    }
+
+    setDismissedUpdateVersion(null);
+    setShowUpdateNotification(true);
+  }, [activeUpdateVersion, dismissedUpdateVersion]);
 
   useEffect(() => {
     const bootTimer = setTimeout(() => {
@@ -268,7 +282,10 @@ function App() {
           progress={progress}
           error={updateError}
           onUpdate={downloadAndInstall}
-          onDismiss={() => setShowUpdateNotification(false)}
+          onDismiss={() => {
+            setDismissedUpdateVersion(activeUpdateVersion);
+            setShowUpdateNotification(false);
+          }}
         />
       )}
     </div>

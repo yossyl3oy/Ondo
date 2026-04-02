@@ -27,6 +27,10 @@ pub struct AppSettings {
     pub compact_mode: bool,
     #[serde(default)]
     pub debug_server: bool,
+    #[serde(default = "default_section_order")]
+    pub section_order: Vec<String>,
+    #[serde(default)]
+    pub hidden_sections: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_state: Option<WindowState>,
 }
@@ -44,6 +48,8 @@ impl Default for AppSettings {
             temperature_unit: "celsius".to_string(),
             compact_mode: false,
             debug_server: false,
+            section_order: default_section_order(),
+            hidden_sections: Vec::new(),
             window_state: None,
         }
     }
@@ -51,6 +57,18 @@ impl Default for AppSettings {
 
 fn default_temperature_unit() -> String {
     "celsius".to_string()
+}
+
+fn default_section_order() -> Vec<String> {
+    vec![
+        "cpu".to_string(),
+        "gpu".to_string(),
+        "storage".to_string(),
+        "motherboard".to_string(),
+        "network".to_string(),
+        "audio".to_string(),
+        "display".to_string(),
+    ]
 }
 
 fn get_settings_path() -> PathBuf {

@@ -882,13 +882,14 @@ export function HudWidget({
 
   // ── Mini mode: compact 1-line per section ──────────────────────────────
   const renderMiniRow = (
+    rowKey: string,
     type: SectionType,
     label: string,
     temp: number | null,
     usage: number,
     barClass?: string,
   ) => (
-    <div key={type} className={`mini-row ${type}`}>
+    <div key={rowKey} className={`mini-row ${type}`}>
       <div className={`section-indicator ${type}`} />
       <span className="mini-label">{label}</span>
       <span className="mini-temp">
@@ -913,21 +914,21 @@ export function HudWidget({
 
       switch (type) {
         case "cpu":
-          if (cpu) rows.push(renderMiniRow("cpu", "CPU", cpu.temperature, cpu.load));
+          if (cpu) rows.push(renderMiniRow("cpu", "cpu", "CPU", cpu.temperature, cpu.load));
           break;
         case "gpu":
-          if (gpu) rows.push(renderMiniRow("gpu", "GPU", gpu.temperature, gpu.load, "gpu"));
+          if (gpu) rows.push(renderMiniRow("gpu", "gpu", "GPU", gpu.temperature, gpu.load, "gpu"));
           break;
         case "storage":
           if (hardwareData.storage && hardwareData.storage.length > 0) {
-            for (const drive of hardwareData.storage) {
-              rows.push(renderMiniRow("storage", "SSD", drive.temperature, drive.usedSpace, "storage"));
+            for (const [index, drive] of hardwareData.storage.entries()) {
+              rows.push(renderMiniRow(`storage-${drive.name}-${index}`, "storage", "SSD", drive.temperature, drive.usedSpace, "storage"));
             }
           }
           break;
         case "motherboard":
           if (hardwareData.motherboard) {
-            rows.push(renderMiniRow("motherboard", "MB", hardwareData.motherboard.temperature, 0));
+            rows.push(renderMiniRow("motherboard", "motherboard", "MB", hardwareData.motherboard.temperature, 0));
           }
           break;
         case "network":

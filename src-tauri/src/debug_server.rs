@@ -2,11 +2,12 @@ use crate::hardware;
 use crate::log_buffer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use std::collections::HashMap;
 
 const PORT: u16 = 19210;
 
-pub async fn start_debug_server() {
+pub async fn start_debug_server(mut shutdown: oneshot::Receiver<()>) {
     let addr = format!("0.0.0.0:{}", PORT);
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => {
@@ -20,7 +21,15 @@ pub async fn start_debug_server() {
     };
 
     loop {
-        let (mut stream, peer) = match listener.accept().await {
+        let accept_result = tokio::select! {
+            _ = &mut shutdown => {
+                crate::log_info!("DebugServer", "Shutdown requested");
+                break;
+            }
+            conn = listener.accept() => conn,
+        };
+
+        let (mut stream, peer) = match accept_result {
             Ok(conn) => conn,
             Err(e) => {
                 crate::log_error!("DebugServer", "Accept error: {}", e);
