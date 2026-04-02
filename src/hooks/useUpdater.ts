@@ -146,13 +146,24 @@ export function useUpdater() {
     }
   }, []);
 
-  // Check for updates on mount (with delay to not interfere with boot)
+  // Check for updates on mount (with delay to not interfere with boot),
+  // then re-check once every 24 hours while the app is running.
   useEffect(() => {
+    const DAILY_MS = 24 * 60 * 60 * 1000;
+
     const timer = setTimeout(() => {
       checkForUpdate();
     }, 10000); // Check 10 seconds after launch
 
-    return () => clearTimeout(timer);
+    const interval = setInterval(() => {
+      console.log("[Updater] Daily update check triggered");
+      checkForUpdate();
+    }, DAILY_MS);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [checkForUpdate]);
 
   return {
