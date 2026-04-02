@@ -31,15 +31,35 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
   });
   // ネットワーク速度の平滑化用EMA (インターフェース名 → { dl, ul })
   const networkEmaRef = useRef<Map<string, { dl: number; ul: number }>>(new Map());
+  // ネットワークインターフェースの最終アクティブ時刻 (インターフェース名 → timestamp)
+  const networkLastActiveRef = useRef<Map<string, number>>(new Map());
+  const NETWORK_GRACE_PERIOD_MS = 3000;
 
   const fetchData = useCallback(async () => {
     try {
       const data = await invoke<HardwareData>("get_hardware_data");
 
-      // ネットワーク速度をEMAで平滑化
+      // ネットワーク: 非アクティブなインターフェースを除外し、EMAで平滑化
       if (data.network) {
-        const alpha = 0.3;
+        const now = Date.now();
+        const lastActive = networkLastActiveRef.current;
         const ema = networkEmaRef.current;
+
+        // rawデータでアクティブ判定を更新
+        for (const iface of data.network) {
+          if (iface.receivedPerSec > 0 || iface.sentPerSec > 0) {
+            lastActive.set(iface.name, now);
+          }
+        }
+
+        // 猶予期間内にアクティブだったインターフェースのみ残す
+        data.network = data.network.filter((iface) => {
+          const last = lastActive.get(iface.name);
+          return last !== undefined && now - last < NETWORK_GRACE_PERIOD_MS;
+        });
+
+        // EMAで平滑化
+        const alpha = 0.3;
         for (const iface of data.network) {
           const prev = ema.get(iface.name);
           if (prev) {
@@ -47,6 +67,17 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
             iface.sentPerSec = alpha * iface.sentPerSec + (1 - alpha) * prev.ul;
           }
           ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
+        }
+
+        // 非アクティブなインターフェースのEMA状態をクリーンアップ
+        const activeNames = new Set(data.network.map((i) => i.name));
+        for (const name of ema.keys()) {
+          if (!activeNames.has(name)) ema.delete(name);
+        }
+        for (const name of lastActive.keys()) {
+          if (now - (lastActive.get(name) ?? 0) > NETWORK_GRACE_PERIOD_MS * 2) {
+            lastActive.delete(name);
+          }
         }
       }
 
