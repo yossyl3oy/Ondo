@@ -53,10 +53,26 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
         }
 
         // 猶予期間内にアクティブだったインターフェースのみ残す
+        const rawInterfaces = data.network;
         data.network = data.network.filter((iface) => {
           const last = lastActive.get(iface.name);
           return last !== undefined && now - last < NETWORK_GRACE_PERIOD_MS;
         });
+
+        // すべてフィルタリングされた場合、メインアダプターを1つ保持する
+        // （最後にアクティブだったもの、またはバックエンドから返された最初のもの）
+        if (data.network.length === 0 && rawInterfaces.length > 0) {
+          let mainAdapter = rawInterfaces[0];
+          let latestTime = 0;
+          for (const iface of rawInterfaces) {
+            const last = lastActive.get(iface.name) ?? 0;
+            if (last > latestTime) {
+              latestTime = last;
+              mainAdapter = iface;
+            }
+          }
+          data.network = [mainAdapter];
+        }
 
         // EMAで平滑化
         const alpha = 0.3;
