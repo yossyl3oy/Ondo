@@ -263,26 +263,3 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: true
           updaterJsonKeepUniversal: true
-
-  cleanup-old-releases:
-    needs: [create-release, build-tauri]
-    if: always() && needs.create-release.result == 'success' && needs.create-release.outputs.skip != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete old releases (keep latest 3)
-        run: |
-          echo "Fetching all releases..."
-          RELEASES=$(gh api repos/${{ github.repository }}/releases --paginate --jq '.[].tag_name')
-          COUNT=0
-          for TAG in $RELEASES; do
-            COUNT=$((COUNT + 1))
-            if [ $COUNT -gt 3 ]; then
-              echo "Deleting release: $TAG"
-              gh release delete "$TAG" --repo ${{ github.repository }} --yes --cleanup-tag
-            else
-              echo "Keeping release: $TAG"
-            fi
-          done
-          echo "Cleanup complete. Kept latest 3 releases."
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
