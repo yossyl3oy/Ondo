@@ -26,10 +26,7 @@ pub fn start_monitoring(app: AppHandle) {
         let initial = is_foreground_maximized(&app);
         LAST_STATE.store(initial, Ordering::Relaxed);
         if initial {
-            let _ = app.emit(
-                "minimode-changed",
-                MiniModePayload { active: true },
-            );
+            let _ = app.emit("minimode-changed", MiniModePayload { active: true });
             crate::log_info!("WindowMonitor", "Mini mode activated (startup)");
         }
 
@@ -149,8 +146,8 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
     use windows::Win32::Graphics::Gdi::MonitorFromWindow;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
-        IsZoomed, GWL_STYLE, GW_OWNER, WS_POPUP,
+        GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect, IsZoomed,
+        GWL_STYLE, GW_OWNER, WS_POPUP,
     };
 
     unsafe {
@@ -160,9 +157,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         }
 
         // Get Ondo's window handle for monitor comparison
-        let ondo_hwnd = app
-            .get_webview_window("main")
-            .and_then(|w| w.hwnd().ok());
+        let ondo_hwnd = app.get_webview_window("main").and_then(|w| w.hwnd().ok());
 
         // Skip if the foreground window is Ondo itself
         if let Some(hwnd) = ondo_hwnd {
@@ -220,8 +215,10 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
 
         // Only trigger mini mode if the target window is on the same monitor as Ondo
         if let Some(hwnd) = ondo_hwnd {
-            let ondo_monitor =
-                MonitorFromWindow(windows::Win32::Foundation::HWND(hwnd.0), MONITOR_DEFAULTTONEAREST);
+            let ondo_monitor = MonitorFromWindow(
+                windows::Win32::Foundation::HWND(hwnd.0),
+                MONITOR_DEFAULTTONEAREST,
+            );
             if fg_monitor != ondo_monitor {
                 return false;
             }
@@ -276,7 +273,14 @@ fn is_explorer_process(hwnd: windows::Win32::Foundation::HWND) -> bool {
 
         let mut buf = [0u16; 260];
         let mut len = buf.len() as u32;
-        let result = if QueryFullProcessImageNameW(handle, PROCESS_NAME_FORMAT(0), windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
+        let result = if QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+        .is_ok()
+        {
             let path = String::from_utf16_lossy(&buf[..len as usize]);
             let lower = path.to_ascii_lowercase();
             lower.ends_with("\\explorer.exe") || lower.ends_with("/explorer.exe")
@@ -336,8 +340,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         // Skip Ondo windows
         let owner_key = CFString::new("kCGWindowOwnerName");
         if let Some(v) = dict.find(&owner_key) {
-            let owner: CFString =
-                unsafe { CFString::wrap_under_get_rule(v.as_CFTypeRef() as _) };
+            let owner: CFString = unsafe { CFString::wrap_under_get_rule(v.as_CFTypeRef() as _) };
             if owner.to_string() == "Ondo" {
                 continue;
             }
@@ -372,10 +375,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         } else {
             unsafe {
                 let d = CGMainDisplayID();
-                (
-                    CGDisplayPixelsWide(d) as f64,
-                    CGDisplayPixelsHigh(d) as f64,
-                )
+                (CGDisplayPixelsWide(d) as f64, CGDisplayPixelsHigh(d) as f64)
             }
         };
 
@@ -387,8 +387,7 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
 
         // Only trigger mini mode if the window is on the same display as Ondo
         if let Some(pos) = &ondo_pos {
-            let ondo_display =
-                display_containing_point(pos.x as f64, pos.y as f64);
+            let ondo_display = display_containing_point(pos.x as f64, pos.y as f64);
             if fg_display != ondo_display {
                 return false; // Different display — not relevant
             }
@@ -436,9 +435,8 @@ fn cf_dict_get_f64(
     use core_foundation::string::CFString;
 
     let cf_key = CFString::new(key);
-    dict.find(&cf_key).and_then(|v| {
-        unsafe { CFNumber::wrap_under_get_rule(v.as_CFTypeRef() as _) }.to_f64()
-    })
+    dict.find(&cf_key)
+        .and_then(|v| unsafe { CFNumber::wrap_under_get_rule(v.as_CFTypeRef() as _) }.to_f64())
 }
 
 #[cfg(target_os = "macos")]
@@ -459,10 +457,7 @@ struct CGPoint {
 #[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    fn CGWindowListCopyWindowInfo(
-        option: u32,
-        relativeToWindow: u32,
-    ) -> *const std::ffi::c_void;
+    fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> *const std::ffi::c_void;
     fn CGMainDisplayID() -> u32;
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;

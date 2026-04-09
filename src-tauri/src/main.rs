@@ -118,7 +118,9 @@ async fn get_hardware_data() -> Result<HardwareData, String> {
         Ok(data) => {
             // Report if both CPU and GPU are null (indicates a problem)
             if data.cpu.is_none() && data.gpu.is_none() {
-                let error_detail = data.cpu_error.as_deref()
+                let error_detail = data
+                    .cpu_error
+                    .as_deref()
                     .or(data.gpu_error.as_deref())
                     .unwrap_or("Unknown error");
                 error_reporting::capture_hardware_error(
@@ -137,13 +139,11 @@ async fn get_hardware_data() -> Result<HardwareData, String> {
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<settings::AppSettings, String> {
-    state.settings.lock()
-        .map(|s| s.clone())
-        .map_err(|e| {
-            let err = e.to_string();
-            error_reporting::capture_settings_error(&err, "get_settings");
-            err
-        })
+    state.settings.lock().map(|s| s.clone()).map_err(|e| {
+        let err = e.to_string();
+        error_reporting::capture_settings_error(&err, "get_settings");
+        err
+    })
 }
 
 #[tauri::command]
@@ -160,22 +160,22 @@ async fn save_settings(
         })?;
         *current = settings.clone();
     }
-    settings::save_settings_to_file(&settings).await.map_err(|e| {
-        error_reporting::capture_settings_error(&e, "save_settings_file");
-        e
-    })
+    settings::save_settings_to_file(&settings)
+        .await
+        .map_err(|e| {
+            error_reporting::capture_settings_error(&e, "save_settings_file");
+            e
+        })
 }
 
 #[tauri::command]
 async fn set_always_on_top(app: AppHandle, enabled: bool) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        window
-            .set_always_on_top(enabled)
-            .map_err(|e| {
-                let err = e.to_string();
-                error_reporting::capture_window_error(&err, "set_always_on_top");
-                err
-            })?;
+        window.set_always_on_top(enabled).map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "set_always_on_top");
+            err
+        })?;
     }
     Ok(())
 }
@@ -201,33 +201,14 @@ async fn set_window_position(app: AppHandle, position: String) -> Result<(), Str
             error_reporting::capture_window_error(&err, "set_window_position_size");
             err
         })?;
+        let position =
+            anchored_window_position(*monitor.position(), *monitor_size, window_size, &position);
 
-        let (x, y) = match position.as_str() {
-            "left" => (0, (monitor_size.height - window_size.height) / 2),
-            "right" => (
-                monitor_size.width - window_size.width,
-                (monitor_size.height - window_size.height) / 2,
-            ),
-            "top-left" => (0, 0),
-            "top-right" => (monitor_size.width - window_size.width, 0),
-            "bottom-left" => (0, monitor_size.height - window_size.height),
-            "bottom-right" => (
-                monitor_size.width - window_size.width,
-                monitor_size.height - window_size.height,
-            ),
-            _ => (
-                monitor_size.width - window_size.width,
-                (monitor_size.height - window_size.height) / 2,
-            ),
-        };
-
-        window
-            .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
-            .map_err(|e| {
-                let err = e.to_string();
-                error_reporting::capture_window_error(&err, "set_window_position_set");
-                err
-            })?;
+        window.set_position(position).map_err(|e| {
+            let err = e.to_string();
+            error_reporting::capture_window_error(&err, "set_window_position_set");
+            err
+        })?;
     }
     Ok(())
 }
@@ -255,8 +236,8 @@ pub struct PawnIOStatus {
 
 #[cfg(target_os = "windows")]
 pub fn get_pawnio_detailed_status() -> PawnIOStatus {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -270,11 +251,22 @@ pub fn get_pawnio_detailed_status() -> PawnIOStatus {
             let qc_stdout = String::from_utf8_lossy(&qc.stdout);
             // Extract BINARY_PATH_NAME from sc qc output and check if file exists
             if let Some(line) = qc_stdout.lines().find(|l| l.contains("BINARY_PATH_NAME")) {
-                let path_str = line.split(':').skip(1).collect::<Vec<_>>().join(":").trim().to_string();
+                let path_str = line
+                    .split(':')
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join(":")
+                    .trim()
+                    .to_string();
                 // Remove leading \??\ prefix if present
                 let clean_path = path_str.trim_start_matches(r"\??\");
                 let exists = std::path::Path::new(clean_path).exists();
-                crate::log_debug!("PawnIO", "Driver binary path: {} (exists={})", clean_path, exists);
+                crate::log_debug!(
+                    "PawnIO",
+                    "Driver binary path: {} (exists={})",
+                    clean_path,
+                    exists
+                );
                 exists
             } else {
                 false
@@ -311,9 +303,18 @@ pub fn get_pawnio_detailed_status() -> PawnIOStatus {
 
             let installed = service_state == "RUNNING";
 
-            crate::log_info!("PawnIO", "Driver status: service={}, driver_file={}", service_state, driver_file_exists);
+            crate::log_info!(
+                "PawnIO",
+                "Driver status: service={}, driver_file={}",
+                service_state,
+                driver_file_exists
+            );
             if !installed {
-                crate::log_warn!("PawnIO", "Driver is not running. CPU temperature may not be available. sc output: {}", stdout.trim());
+                crate::log_warn!(
+                    "PawnIO",
+                    "Driver is not running. CPU temperature may not be available. sc output: {}",
+                    stdout.trim()
+                );
             }
 
             PawnIOStatus {
@@ -359,10 +360,8 @@ async fn check_pawnio_status() -> Result<PawnIOStatus, String> {
 #[tauri::command]
 async fn download_and_install_pawnio() -> Result<String, String> {
     // Get the bundled PawnIO installer path
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to get exe path: {}", e))?;
-    let exe_dir = exe_path.parent()
-        .ok_or("Failed to get exe directory")?;
+    let exe_path = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
+    let exe_dir = exe_path.parent().ok_or("Failed to get exe directory")?;
 
     // In development, the resources are in src-tauri/resources
     // In production, they're next to the exe
@@ -375,14 +374,17 @@ async fn download_and_install_pawnio() -> Result<String, String> {
     };
 
     if !installer_path.exists() {
-        return Err(format!("PawnIO installer not found at {:?}", installer_path));
+        return Err(format!(
+            "PawnIO installer not found at {:?}",
+            installer_path
+        ));
     }
 
     // Run the installer with UAC elevation (ShellExecuteW with "runas")
     // Use -install -silent for PawnIO silent installation
     tokio::task::spawn_blocking(move || {
-        use std::os::windows::ffi::OsStrExt;
         use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
 
         let path_wide: Vec<u16> = OsStr::new(installer_path.to_str().unwrap_or_default())
             .encode_wide()
@@ -401,9 +403,9 @@ async fn download_and_install_pawnio() -> Result<String, String> {
             .collect();
 
         unsafe {
+            use windows::core::PCWSTR;
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-            use windows::core::PCWSTR;
 
             let result = ShellExecuteW(
                 None,
@@ -416,11 +418,17 @@ async fn download_and_install_pawnio() -> Result<String, String> {
 
             // ShellExecuteW returns a value > 32 on success
             if result.0 as isize <= 32 {
-                return Err(format!("Failed to launch installer (error code: {})", result.0 as isize));
+                return Err(format!(
+                    "Failed to launch installer (error code: {})",
+                    result.0 as isize
+                ));
             }
         }
 
-        Ok("PawnIO driver is being installed. Please restart Ondo after installation completes.".to_string())
+        Ok(
+            "PawnIO driver is being installed. Please restart Ondo after installation completes."
+                .to_string(),
+        )
     })
     .await
     .map_err(|e| format!("Install task failed: {}", e))?
@@ -563,7 +571,10 @@ async fn toggle_debug_server(state: State<'_, AppState>, enabled: bool) -> Resul
     if enabled && !was_running {
         state.debug_server_running.store(true, Ordering::SeqCst);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let mut shutdown = state.debug_server_shutdown.lock().map_err(|e| e.to_string())?;
+        let mut shutdown = state
+            .debug_server_shutdown
+            .lock()
+            .map_err(|e| e.to_string())?;
         *shutdown = Some(shutdown_tx);
         drop(shutdown);
         tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
@@ -582,6 +593,57 @@ async fn toggle_debug_server(state: State<'_, AppState>, enabled: bool) -> Resul
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum AxisAnchor {
+    Start,
+    Center,
+    End,
+}
+
+fn anchored_axis(origin: i32, monitor_len: u32, window_len: u32, anchor: AxisAnchor) -> i32 {
+    let origin = i64::from(origin);
+    let available = (i64::from(monitor_len) - i64::from(window_len)).max(0);
+    let coordinate = match anchor {
+        AxisAnchor::Start => origin,
+        AxisAnchor::Center => origin + available / 2,
+        AxisAnchor::End => origin + available,
+    };
+
+    coordinate.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
+fn anchored_window_position(
+    monitor_position: tauri::PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+    window_size: tauri::PhysicalSize<u32>,
+    position: &str,
+) -> tauri::PhysicalPosition<i32> {
+    let (horizontal, vertical) = match position {
+        "left" => (AxisAnchor::Start, AxisAnchor::Center),
+        "right" => (AxisAnchor::End, AxisAnchor::Center),
+        "top-left" => (AxisAnchor::Start, AxisAnchor::Start),
+        "top-right" => (AxisAnchor::End, AxisAnchor::Start),
+        "bottom-left" => (AxisAnchor::Start, AxisAnchor::End),
+        "bottom-right" => (AxisAnchor::End, AxisAnchor::End),
+        _ => (AxisAnchor::End, AxisAnchor::Center),
+    };
+
+    tauri::PhysicalPosition::new(
+        anchored_axis(
+            monitor_position.x,
+            monitor_size.width,
+            window_size.width,
+            horizontal,
+        ),
+        anchored_axis(
+            monitor_position.y,
+            monitor_size.height,
+            window_size.height,
+            vertical,
+        ),
+    )
+}
+
 fn main() {
     // Capture all `log` crate output (including Tauri internals) into the debug server buffer
     log_buffer::init_logger();
@@ -589,8 +651,8 @@ fn main() {
     // Initialize Sentry for error reporting
     error_reporting::init_sentry();
 
-    let initial_settings = settings::load_settings_from_file()
-        .unwrap_or_else(|_| settings::AppSettings::default());
+    let initial_settings =
+        settings::load_settings_from_file().unwrap_or_else(|_| settings::AppSettings::default());
 
     // Clone values we need for setup before moving into AppState
     let startup_position = initial_settings.position.clone();
@@ -689,28 +751,9 @@ fn set_initial_position(
     position: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let monitor = window.current_monitor()?.ok_or("No monitor")?;
-    let monitor_size = monitor.size();
     let window_size = window.outer_size()?;
-
-    let (x, y) = match position {
-        "left" => (0, (monitor_size.height - window_size.height) / 2),
-        "right" => (
-            monitor_size.width - window_size.width,
-            (monitor_size.height - window_size.height) / 2,
-        ),
-        "top-left" => (0, 0),
-        "top-right" => (monitor_size.width - window_size.width, 0),
-        "bottom-left" => (0, monitor_size.height - window_size.height),
-        "bottom-right" => (
-            monitor_size.width - window_size.width,
-            monitor_size.height - window_size.height,
-        ),
-        _ => (
-            monitor_size.width - window_size.width,
-            (monitor_size.height - window_size.height) / 2,
-        ),
-    };
-
-    window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32))?;
+    let position =
+        anchored_window_position(*monitor.position(), *monitor.size(), window_size, position);
+    window.set_position(position)?;
     Ok(())
 }

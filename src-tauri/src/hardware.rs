@@ -1,4 +1,7 @@
-use crate::{CpuCoreData, CpuData, DisplayData, GpuData, HardwareData, StorageData, MotherboardData, NetworkInterfaceData};
+use crate::{
+    CpuCoreData, CpuData, DisplayData, GpuData, HardwareData, MotherboardData,
+    NetworkInterfaceData, StorageData,
+};
 
 #[cfg(target_os = "windows")]
 use crate::FanData;
@@ -80,9 +83,9 @@ struct LhmFanData {
 
 // LHM daemon process state
 #[cfg(target_os = "windows")]
-use std::process::{Child, ChildStdout};
+use std::io::{BufRead, BufReader};
 #[cfg(target_os = "windows")]
-use std::io::{BufReader, BufRead};
+use std::process::{Child, ChildStdout};
 
 #[cfg(target_os = "windows")]
 struct LhmDaemon {
@@ -107,17 +110,20 @@ static NETWORK_MONITOR: Mutex<Option<NetworkMonitor>> = Mutex::new(None);
 /// Identifies the primary monitor by matching the DeviceID from EnumDisplayDevices.
 #[cfg(target_os = "windows")]
 fn get_primary_monitor_name_from_edid() -> Option<String> {
-    use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
-        SetupDiGetClassDevsW, SetupDiEnumDeviceInfo, SetupDiOpenDevRegKey,
-        SP_DEVINFO_DATA, DIGCF_PRESENT,
+        SetupDiEnumDeviceInfo, SetupDiGetClassDevsW, SetupDiOpenDevRegKey, DIGCF_PRESENT,
+        SP_DEVINFO_DATA,
     };
-    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
     use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
 
     // GUID_DEVCLASS_MONITOR {4d36e96e-e325-11ce-bfc1-08002be10318}
     let monitor_class_guid = windows::core::GUID::from_values(
-        0x4d36e96e, 0xe325, 0x11ce, [0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18],
+        0x4d36e96e,
+        0xe325,
+        0x11ce,
+        [0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18],
     );
 
     // Step 1: Get the primary monitor's DeviceID from EnumDisplayDevices
@@ -133,12 +139,9 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
                 let adapter_name_ptr = adapter.DeviceName.as_ptr();
                 let mut monitor: DISPLAY_DEVICEW = std::mem::zeroed();
                 monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
-                if EnumDisplayDevicesW(
-                    windows::core::PCWSTR(adapter_name_ptr),
-                    0,
-                    &mut monitor,
-                    0,
-                ).as_bool() {
+                if EnumDisplayDevicesW(windows::core::PCWSTR(adapter_name_ptr), 0, &mut monitor, 0)
+                    .as_bool()
+                {
                     let id = String::from_utf16_lossy(&monitor.DeviceID);
                     let id = id.trim_end_matches('\0').to_string();
                     // Extract the monitor hardware ID portion (e.g., "MONITOR\DEL4265")
@@ -160,7 +163,8 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
             None,
             Some(HWND::default()),
             DIGCF_PRESENT,
-        ).ok()?
+        )
+        .ok()?
     };
 
     let mut dev_info_data = SP_DEVINFO_DATA {
@@ -177,9 +181,10 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
                 &dev_info_data,
                 1, // DICS_FLAG_GLOBAL
                 0,
-                1, // DIREG_DEV
+                1,       // DIREG_DEV
                 0x20019, // KEY_READ
-            ).ok()
+            )
+            .ok()
         };
 
         if let Some(hkey) = hkey {
@@ -224,7 +229,12 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
                     )
                 };
 
-                let _ = unsafe { windows::Win32::Foundation::CloseHandle(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(hkey)) };
+                let _ = unsafe {
+                    windows::Win32::Foundation::CloseHandle(std::mem::transmute::<
+                        _,
+                        windows::Win32::Foundation::HANDLE,
+                    >(hkey))
+                };
 
                 if result.is_ok() && data_size >= 128 {
                     // Parse EDID descriptor blocks (bytes 54-125, four 18-byte blocks)
@@ -246,7 +256,12 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
                     }
                 }
             } else {
-                let _ = unsafe { windows::Win32::Foundation::CloseHandle(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(hkey)) };
+                let _ = unsafe {
+                    windows::Win32::Foundation::CloseHandle(std::mem::transmute::<
+                        _,
+                        windows::Win32::Foundation::HANDLE,
+                    >(hkey))
+                };
             }
         }
 
@@ -258,9 +273,7 @@ fn get_primary_monitor_name_from_edid() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn get_display_info() -> Option<DisplayData> {
-    use windows::Win32::Graphics::Gdi::{
-        EnumDisplaySettingsW, DEVMODEW, ENUM_CURRENT_SETTINGS,
-    };
+    use windows::Win32::Graphics::Gdi::{EnumDisplaySettingsW, DEVMODEW, ENUM_CURRENT_SETTINGS};
 
     let mut devmode: DEVMODEW = unsafe { std::mem::zeroed() };
     devmode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
@@ -276,9 +289,9 @@ fn get_display_info() -> Option<DisplayData> {
 
     // Get monitor model name from EDID in registry (cached)
     static MONITOR_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    let monitor_name = MONITOR_NAME.get_or_init(|| {
-        get_primary_monitor_name_from_edid()
-    }).clone();
+    let monitor_name = MONITOR_NAME
+        .get_or_init(|| get_primary_monitor_name_from_edid())
+        .clone();
 
     let (fps, fps_process_name) = match crate::fps_monitor::get_foreground_fps() {
         Some((f, name)) => (Some(f), Some(name)),
@@ -315,36 +328,42 @@ fn get_display_info() -> Option<DisplayData> {
         } else {
             let rate = CGDisplayModeGetRefreshRate(mode);
             CGDisplayModeRelease(mode);
-            if rate > 0.0 { rate.round() as u32 } else { 60 }
+            if rate > 0.0 {
+                rate.round() as u32
+            } else {
+                60
+            }
         }
     };
 
     // Get monitor name via system_profiler (cached — only runs once)
     static MONITOR_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    let monitor_name = MONITOR_NAME.get_or_init(|| {
-        std::process::Command::new("system_profiler")
-            .args(["SPDisplaysDataType", "-detailLevel", "basic"])
-            .output()
-            .ok()
-            .and_then(|output| {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.ends_with(':')
-                        && !trimmed.starts_with("Display")
-                        && !trimmed.starts_with("Graphics")
-                        && line.starts_with("        ")
-                        && !line.starts_with("          ")
-                    {
-                        let name = trimmed.trim_end_matches(':').to_string();
-                        if !name.is_empty() {
-                            return Some(name);
+    let monitor_name = MONITOR_NAME
+        .get_or_init(|| {
+            std::process::Command::new("system_profiler")
+                .args(["SPDisplaysDataType", "-detailLevel", "basic"])
+                .output()
+                .ok()
+                .and_then(|output| {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    for line in text.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.ends_with(':')
+                            && !trimmed.starts_with("Display")
+                            && !trimmed.starts_with("Graphics")
+                            && line.starts_with("        ")
+                            && !line.starts_with("          ")
+                        {
+                            let name = trimmed.trim_end_matches(':').to_string();
+                            if !name.is_empty() {
+                                return Some(name);
+                            }
                         }
                     }
-                }
-                None
-            })
-    }).clone();
+                    None
+                })
+        })
+        .clone();
 
     let (fps, fps_process_name) = match crate::fps_monitor::get_foreground_fps() {
         Some((f, name)) => (Some(f), Some(name)),
@@ -391,7 +410,11 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 collect_network_data(&mon.networks, elapsed)
             }
         };
-        let network = if network.is_empty() { None } else { Some(network) };
+        let network = if network.is_empty() {
+            None
+        } else {
+            Some(network)
+        };
 
         if let Some(lhm) = lhm_data {
             // Use LHM data, supplement with sysinfo where needed
@@ -403,7 +426,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 let frequency = if c.frequency > 0.0 {
                     c.frequency
                 } else {
-                    sysinfo_data.cpu.as_ref()
+                    sysinfo_data
+                        .cpu
+                        .as_ref()
                         .map(|cpu| cpu.frequency)
                         .unwrap_or(0.0)
                 };
@@ -414,21 +439,27 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                     max_temperature: c.max_temperature,
                     load: c.load,
                     frequency,
-                    cores: c.cores.map(|cores| {
-                        cores.into_iter().map(|core| {
-                            // If per-core temperature is 0, use the package temperature
-                            let core_temp = if core.temperature > 0.0 {
-                                core.temperature
-                            } else {
-                                temperature
-                            };
-                            CpuCoreData {
-                                index: core.index,
-                                temperature: core_temp,
-                                load: core.load,
-                            }
-                        }).collect()
-                    }).unwrap_or_default(),
+                    cores: c
+                        .cores
+                        .map(|cores| {
+                            cores
+                                .into_iter()
+                                .map(|core| {
+                                    // If per-core temperature is 0, use the package temperature
+                                    let core_temp = if core.temperature > 0.0 {
+                                        core.temperature
+                                    } else {
+                                        temperature
+                                    };
+                                    CpuCoreData {
+                                        index: core.index,
+                                        temperature: core_temp,
+                                        load: core.load,
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 }
             });
 
@@ -445,44 +476,58 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             // For storage: use LHM data, supplement with sysinfo if LHM data is incomplete
             let storage = lhm.storage.map(|storages| {
                 let sysinfo_storage = sysinfo_data.storage.as_ref();
-                storages.into_iter().map(|s| {
-                    // Find matching sysinfo storage for supplementing missing data
-                    let sysinfo_match = sysinfo_storage.and_then(|ss| {
-                        ss.iter().find(|si| {
-                            si.name.contains(&s.name) || s.name.contains(&si.name) ||
-                            si.name.split_whitespace().next().map(|first| s.name.contains(first)).unwrap_or(false)
-                        })
-                    });
+                storages
+                    .into_iter()
+                    .map(|s| {
+                        // Find matching sysinfo storage for supplementing missing data
+                        let sysinfo_match = sysinfo_storage.and_then(|ss| {
+                            ss.iter().find(|si| {
+                                si.name.contains(&s.name)
+                                    || s.name.contains(&si.name)
+                                    || si
+                                        .name
+                                        .split_whitespace()
+                                        .next()
+                                        .map(|first| s.name.contains(first))
+                                        .unwrap_or(false)
+                            })
+                        });
 
-                    let total_space = if s.total_space > 0.0 {
-                        s.total_space
-                    } else {
-                        sysinfo_match.map(|si| si.total_space).unwrap_or(0.0)
-                    };
+                        let total_space = if s.total_space > 0.0 {
+                            s.total_space
+                        } else {
+                            sysinfo_match.map(|si| si.total_space).unwrap_or(0.0)
+                        };
 
-                    let used_space = if s.used_percent > 0.0 {
-                        s.used_percent
-                    } else {
-                        sysinfo_match.map(|si| si.used_space).unwrap_or(0.0)
-                    };
+                        let used_space = if s.used_percent > 0.0 {
+                            s.used_percent
+                        } else {
+                            sysinfo_match.map(|si| si.used_space).unwrap_or(0.0)
+                        };
 
-                    StorageData {
-                        name: s.name,
-                        temperature: s.temperature,
-                        used_space,
-                        total_space,
-                    }
-                }).collect()
+                        StorageData {
+                            name: s.name,
+                            temperature: s.temperature,
+                            used_space,
+                            total_space,
+                        }
+                    })
+                    .collect()
             });
 
             // For motherboard: use LHM data only (sysinfo cannot provide this)
             let motherboard = lhm.motherboard.map(|m| {
-                let fans = m.fans.map(|fans| {
-                    fans.into_iter().map(|f| FanData {
-                        name: f.name,
-                        speed: f.speed,
-                    }).collect()
-                }).unwrap_or_default();
+                let fans = m
+                    .fans
+                    .map(|fans| {
+                        fans.into_iter()
+                            .map(|f| FanData {
+                                name: f.name,
+                                speed: f.speed,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 MotherboardData {
                     name: m.name,
                     temperature: m.temperature,
@@ -545,7 +590,11 @@ fn get_lhm_data() -> Option<LhmResponse> {
     match daemon.process.try_wait() {
         Ok(Some(status)) => {
             // Process exited, restart it
-            crate::log_warn!("Hardware", "LHM daemon exited with status: {}, restarting...", status);
+            crate::log_warn!(
+                "Hardware",
+                "LHM daemon exited with status: {}, restarting...",
+                status
+            );
             *daemon_guard = None;
             return None;
         }
@@ -567,14 +616,13 @@ fn get_lhm_data() -> Option<LhmResponse> {
         // Check if there's data available before attempting to read
         let has_data = {
             use std::os::windows::io::AsRawHandle;
-            use windows::Win32::System::Pipes::PeekNamedPipe;
             use windows::Win32::Foundation::HANDLE;
+            use windows::Win32::System::Pipes::PeekNamedPipe;
 
             let handle = HANDLE(daemon.reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
             let mut bytes_available: u32 = 0;
-            let ok = unsafe {
-                PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None)
-            };
+            let ok =
+                unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None) };
             ok.is_ok() && bytes_available > 0
         };
 
@@ -617,9 +665,9 @@ fn get_lhm_data() -> Option<LhmResponse> {
 
 #[cfg(target_os = "windows")]
 fn start_lhm_daemon() -> Result<LhmDaemon, String> {
-    use std::process::{Command, Stdio};
-    use std::os::windows::process::CommandExt;
     use std::env;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
 
     // CREATE_NO_WINDOW flag to prevent console window from appearing
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -641,7 +689,9 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
         .spawn()
         .map_err(|e| format!("Failed to start LHM daemon: {}", e))?;
 
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or("Failed to capture LHM daemon stdout")?;
 
     let mut reader = BufReader::new(stdout);
@@ -656,14 +706,13 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
         // Use a short sleep + peek approach to avoid blocking forever
         {
             use std::os::windows::io::AsRawHandle;
-            use windows::Win32::System::Pipes::PeekNamedPipe;
             use windows::Win32::Foundation::HANDLE;
+            use windows::Win32::System::Pipes::PeekNamedPipe;
 
             let handle = HANDLE(reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
             let mut bytes_available: u32 = 0;
-            let ok = unsafe {
-                PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None)
-            };
+            let ok =
+                unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None) };
             if !ok.is_ok() || bytes_available == 0 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 continue;
@@ -695,7 +744,10 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
     }
 
     if initial_data.is_none() {
-        crate::log_warn!("Hardware", "LHM daemon started but no initial data received within timeout");
+        crate::log_warn!(
+            "Hardware",
+            "LHM daemon started but no initial data received within timeout"
+        );
     }
 
     Ok(LhmDaemon {
@@ -717,7 +769,7 @@ pub fn shutdown_lhm_daemon() {
 }
 
 // sysinfo for hardware data (replaces WMI on Windows to avoid application control policy blocks)
-use sysinfo::{System, Disks, Networks};
+use sysinfo::{Disks, Networks, System};
 
 /// Collect network interface data from sysinfo Networks.
 /// `networks` must have been refreshed before calling this.
@@ -727,7 +779,8 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
     for (name, data) in networks.list() {
         // Filter out loopback and virtual interfaces
         let lower = name.to_lowercase();
-        if lower == "lo" || lower == "lo0"
+        if lower == "lo"
+            || lower == "lo0"
             || lower.starts_with("veth")
             || lower.starts_with("docker")
             || lower.starts_with("br-")
@@ -754,7 +807,11 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
         let received = data.received();
         let transmitted = data.transmitted();
 
-        let rate = if interval_secs > 0.0 { interval_secs } else { 1.0 };
+        let rate = if interval_secs > 0.0 {
+            interval_secs
+        } else {
+            1.0
+        };
         result.push(NetworkInterfaceData {
             name: name.clone(),
             received_per_sec: received as f64 / rate,
@@ -785,15 +842,20 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
     let cpu = if !cpus.is_empty() {
         let name = cpus[0].brand().to_string();
         let total_load: f32 = cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32;
-        let avg_freq = cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
+        let avg_freq =
+            cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
 
-        let cores: Vec<CpuCoreData> = cpus.iter().enumerate().map(|(i, c)| {
-            CpuCoreData {
-                index: i as u32,
-                temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
-                load: c.cpu_usage(),
-            }
-        }).collect();
+        let cores: Vec<CpuCoreData> = cpus
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                CpuCoreData {
+                    index: i as u32,
+                    temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
+                    load: c.cpu_usage(),
+                }
+            })
+            .collect();
 
         Some(CpuData {
             name,
@@ -812,12 +874,17 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
 
     // Storage: use sysinfo Disks
     let disks = Disks::new_with_refreshed_list();
-    let storage_data: Vec<StorageData> = disks.iter()
+    let storage_data: Vec<StorageData> = disks
+        .iter()
         .filter(|d| d.total_space() > 1_073_741_824) // > 1GB
         .map(|d| {
             let total_gb = d.total_space() as f32 / 1_073_741_824.0;
             let used_gb = (d.total_space() - d.available_space()) as f32 / 1_073_741_824.0;
-            let used_percent = if total_gb > 0.0 { (used_gb / total_gb) * 100.0 } else { 0.0 };
+            let used_percent = if total_gb > 0.0 {
+                (used_gb / total_gb) * 100.0
+            } else {
+                0.0
+            };
             let name = d.name().to_string_lossy().to_string();
             let name = if name.is_empty() {
                 d.mount_point().to_string_lossy().to_string()
@@ -833,7 +900,11 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
         })
         .collect();
 
-    let storage = if storage_data.is_empty() { None } else { Some(storage_data) };
+    let storage = if storage_data.is_empty() {
+        None
+    } else {
+        Some(storage_data)
+    };
 
     SysinfoFallback { cpu, gpu, storage }
 }
@@ -842,8 +913,8 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
 #[cfg(target_os = "windows")]
 fn get_gpu_info_without_wmi() -> Option<GpuData> {
     // Try NVIDIA first, then AMD
-    let (temperature, load, memory_used, frequency) = get_nvidia_smi_stats()
-        .or_else(get_amd_gpu_stats)?;
+    let (temperature, load, memory_used, frequency) =
+        get_nvidia_smi_stats().or_else(get_amd_gpu_stats)?;
 
     // Get GPU name from nvidia-smi if available
     let name = get_nvidia_gpu_name().unwrap_or_else(|| "Unknown GPU".to_string());
@@ -862,8 +933,8 @@ fn get_gpu_info_without_wmi() -> Option<GpuData> {
 /// Get NVIDIA GPU name via nvidia-smi
 #[cfg(target_os = "windows")]
 fn get_nvidia_gpu_name() -> Option<String> {
-    use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = Command::new("nvidia-smi")
@@ -876,7 +947,9 @@ fn get_nvidia_gpu_name() -> Option<String> {
 
     if output.status.success() {
         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !name.is_empty() { return Some(name); }
+        if !name.is_empty() {
+            return Some(name);
+        }
     }
     None
 }
@@ -884,8 +957,8 @@ fn get_nvidia_gpu_name() -> Option<String> {
 /// Get NVIDIA GPU total memory via nvidia-smi
 #[cfg(target_os = "windows")]
 fn get_nvidia_memory_total() -> Option<f32> {
-    use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = Command::new("nvidia-smi")
@@ -906,15 +979,15 @@ fn get_nvidia_memory_total() -> Option<f32> {
 
 #[cfg(target_os = "windows")]
 fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
-    use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = Command::new("nvidia-smi")
         .args([
             "--query-gpu=temperature.gpu,utilization.gpu,memory.used,clocks.gr",
-            "--format=csv,noheader,nounits"
+            "--format=csv,noheader,nounits",
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
@@ -944,8 +1017,8 @@ fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
 // AMD GPU stats using rocm-smi or fallback methods
 #[cfg(target_os = "windows")]
 fn get_amd_gpu_stats() -> Option<(f32, f32, f32, f32)> {
-    use std::process::{Command, Stdio};
     use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -966,9 +1039,18 @@ fn get_amd_gpu_stats() -> Option<(f32, f32, f32, f32)> {
             for line in stdout.lines().skip(1) {
                 let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
                 if parts.len() >= 4 {
-                    let temp = parts.get(1).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-                    let load = parts.get(2).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-                    let mem_used = parts.get(3).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    let temp = parts
+                        .get(1)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
+                    let load = parts
+                        .get(2)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
+                    let mem_used = parts
+                        .get(3)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
                     return Some((temp, load, mem_used / 1024.0, 0.0)); // Frequency not easily available
                 }
             }
@@ -1011,7 +1093,12 @@ fn init_macos_monitor() -> MacOsMonitor {
 
     // Log available temperature sensors for debugging
     for comp in components.iter() {
-        crate::log_debug!("macOS", "Temperature sensor: {} = {:?}°C", comp.label(), comp.temperature());
+        crate::log_debug!(
+            "macOS",
+            "Temperature sensor: {} = {:?}°C",
+            comp.label(),
+            comp.temperature()
+        );
     }
 
     let (gpu_name, mut gpu_memory_total) = get_macos_gpu_info();
@@ -1055,10 +1142,14 @@ fn classify_temperature(label: &str) -> TempKind {
     // Intel: "TC0P" (CPU proximity), "TC0D" (CPU die), "TC0E", "TC0F"
     // Apple Silicon: "Tp01"-"Tp0T" (CPU cluster temps), "SOC MTR Temp"
     // Apple Silicon (M4+): "PMU tdie*" (SoC die temperature sensors)
-    if l.contains("cpu") || l.contains("processor")
-        || l.starts_with("tc0") || l.starts_with("tc1")
+    if l.contains("cpu")
+        || l.contains("processor")
+        || l.starts_with("tc0")
+        || l.starts_with("tc1")
         || (l.starts_with("tp") && l.len() <= 6)
-        || l.contains("soc mtr temp") || l.contains("pcore") || l.contains("ecore")
+        || l.contains("soc mtr temp")
+        || l.contains("pcore")
+        || l.contains("ecore")
         || (l.starts_with("pmu") && l.contains("tdie"))
     {
         TempKind::Cpu
@@ -1070,8 +1161,11 @@ fn classify_temperature(label: &str) -> TempKind {
         TempKind::Gpu
     }
     // Storage-related
-    else if l.contains("ssd") || l.contains("disk") || l.contains("nand")
-        || l.starts_with("th") || l.contains("hdd")
+    else if l.contains("ssd")
+        || l.contains("disk")
+        || l.contains("nand")
+        || l.starts_with("th")
+        || l.contains("hdd")
     {
         TempKind::Storage
     }
@@ -1089,7 +1183,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        let mut monitor_guard = MACOS_MONITOR.lock()
+        let mut monitor_guard = MACOS_MONITOR
+            .lock()
             .map_err(|e| format!("Monitor lock failed: {}", e))?;
 
         if monitor_guard.is_none() {
@@ -1145,34 +1240,43 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
 
         // CPU data
         let cpus = monitor.system.cpus();
-        let cpu_name = cpus.first()
+        let cpu_name = cpus
+            .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_default();
         let cpu_load = monitor.system.global_cpu_usage();
         let cpu_freq = if !cpus.is_empty() {
             let total_freq: u64 = cpus.iter().map(|c| c.frequency()).sum();
             let freq_ghz = (total_freq as f32 / cpus.len() as f32) / 1000.0; // MHz to GHz
-            // sysinfo returns unreliable frequency on Apple Silicon (e.g. 0.004 GHz)
-            // Treat values < 0.1 GHz as unavailable
-            if freq_ghz < 0.1 { 0.0 } else { freq_ghz }
+                                                                             // sysinfo returns unreliable frequency on Apple Silicon (e.g. 0.004 GHz)
+                                                                             // Treat values < 0.1 GHz as unavailable
+            if freq_ghz < 0.1 {
+                0.0
+            } else {
+                freq_ghz
+            }
         } else {
             0.0
         };
 
         let num_cpus = cpus.len();
-        let cores: Vec<CpuCoreData> = cpus.iter().enumerate().map(|(i, cpu)| {
-            // Estimate per-core temps (slight variation around the package temp)
-            let core_temp = if cpu_temp > 0.0 {
-                cpu_temp + (i as f32 * 0.3) - (num_cpus as f32 * 0.15)
-            } else {
-                0.0
-            };
-            CpuCoreData {
-                index: i as u32,
-                temperature: core_temp,
-                load: cpu.cpu_usage(),
-            }
-        }).collect();
+        let cores: Vec<CpuCoreData> = cpus
+            .iter()
+            .enumerate()
+            .map(|(i, cpu)| {
+                // Estimate per-core temps (slight variation around the package temp)
+                let core_temp = if cpu_temp > 0.0 {
+                    cpu_temp + (i as f32 * 0.3) - (num_cpus as f32 * 0.15)
+                } else {
+                    0.0
+                };
+                CpuCoreData {
+                    index: i as u32,
+                    temperature: core_temp,
+                    load: cpu.cpu_usage(),
+                }
+            })
+            .collect();
 
         let cpu = if !cpu_name.is_empty() {
             Some(CpuData {
@@ -1209,14 +1313,15 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         };
 
         // Storage data
-        let storage: Vec<StorageData> = monitor.disks.iter()
+        let storage: Vec<StorageData> = monitor
+            .disks
+            .iter()
             .filter(|d| {
                 let mp = d.mount_point();
                 let total = d.total_space();
                 // Filter: > 1GB, not system volumes, not dev filesystems
                 total > 1_000_000_000
-                    && (mp == std::path::Path::new("/")
-                        || mp.starts_with("/Volumes"))
+                    && (mp == std::path::Path::new("/") || mp.starts_with("/Volumes"))
             })
             .map(|d| {
                 let total_gb = d.total_space() as f32 / (1024.0 * 1024.0 * 1024.0);
@@ -1236,7 +1341,8 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                         disk_name
                     }
                 } else {
-                    d.mount_point().file_name()
+                    d.mount_point()
+                        .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| d.name().to_string_lossy().to_string())
                 };
@@ -1270,9 +1376,17 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         Ok(HardwareData {
             cpu,
             gpu,
-            storage: if storage.is_empty() { None } else { Some(storage) },
+            storage: if storage.is_empty() {
+                None
+            } else {
+                Some(storage)
+            },
             motherboard,
-            network: if network_data.is_empty() { None } else { Some(network_data) },
+            network: if network_data.is_empty() {
+                None
+            } else {
+                Some(network_data)
+            },
             display: get_display_info(),
             timestamp,
             cpu_error: None,
@@ -1299,13 +1413,15 @@ fn get_macos_gpu_info() -> (String, f32) {
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
                 if let Some(displays) = json.get("SPDisplaysDataType").and_then(|d| d.as_array()) {
                     if let Some(gpu) = displays.first() {
-                        let name = gpu.get("sppci_model")
+                        let name = gpu
+                            .get("sppci_model")
                             .and_then(|n| n.as_str())
                             .unwrap_or("Unknown GPU")
                             .to_string();
 
                         // Parse VRAM string like "8 GB" or "16384 MB"
-                        let vram_gb = gpu.get("spdisplays_vram_shared")
+                        let vram_gb = gpu
+                            .get("spdisplays_vram_shared")
                             .or_else(|| gpu.get("spdisplays_vram"))
                             .and_then(|v| v.as_str())
                             .and_then(|s| {

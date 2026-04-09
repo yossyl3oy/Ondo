@@ -18,7 +18,10 @@ mod platform {
     use std::mem;
     use std::ptr;
 
-    unsafe fn get_string_property(device_id: AudioDeviceID, selector: AudioObjectPropertySelector) -> Option<String> {
+    unsafe fn get_string_property(
+        device_id: AudioDeviceID,
+        selector: AudioObjectPropertySelector,
+    ) -> Option<String> {
         let address = AudioObjectPropertyAddress {
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -62,7 +65,10 @@ mod platform {
         }
     }
 
-    unsafe fn device_has_streams(device_id: AudioDeviceID, scope: AudioObjectPropertyScope) -> bool {
+    unsafe fn device_has_streams(
+        device_id: AudioDeviceID,
+        scope: AudioObjectPropertyScope,
+    ) -> bool {
         let address = AudioObjectPropertyAddress {
             mSelector: kAudioDevicePropertyStreams,
             mScope: scope,
@@ -70,13 +76,7 @@ mod platform {
         };
 
         let mut size: u32 = 0;
-        let status = AudioObjectGetPropertyDataSize(
-            device_id,
-            &address,
-            0,
-            ptr::null(),
-            &mut size,
-        );
+        let status = AudioObjectGetPropertyDataSize(device_id, &address, 0, ptr::null(), &mut size);
 
         status == 0 && size > 0
     }
@@ -207,7 +207,10 @@ mod platform {
             );
 
             if status != 0 {
-                Err(format!("Failed to set default {} device: {}", device_type, status))
+                Err(format!(
+                    "Failed to set default {} device: {}",
+                    device_type, status
+                ))
             } else {
                 Ok(())
             }
@@ -223,24 +226,53 @@ mod platform {
     use super::AudioDevice;
     use windows::core::{GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-    use windows::Win32::Media::Audio::*;
-    use windows::Win32::System::Com::*;
-    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::Foundation::PROPERTYKEY;
+    use windows::Win32::Media::Audio::*;
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Com::*;
 
     // IPolicyConfig is an undocumented COM interface used to set default audio device
     #[windows::core::interface("f8679f50-850a-41cf-9c72-430f290290c8")]
     unsafe trait IPolicyConfig: windows::core::IUnknown {
-        unsafe fn GetMixFormat(&self, device_id: PCWSTR, format: *mut *mut WAVEFORMATEX) -> HRESULT;
-        unsafe fn GetDeviceFormat(&self, device_id: PCWSTR, default: i32, format: *mut *mut WAVEFORMATEX) -> HRESULT;
+        unsafe fn GetMixFormat(&self, device_id: PCWSTR, format: *mut *mut WAVEFORMATEX)
+            -> HRESULT;
+        unsafe fn GetDeviceFormat(
+            &self,
+            device_id: PCWSTR,
+            default: i32,
+            format: *mut *mut WAVEFORMATEX,
+        ) -> HRESULT;
         unsafe fn ResetDeviceFormat(&self, device_id: PCWSTR) -> HRESULT;
-        unsafe fn SetDeviceFormat(&self, device_id: PCWSTR, endpoint_format: *const WAVEFORMATEX, mix_format: *const WAVEFORMATEX) -> HRESULT;
-        unsafe fn GetProcessingPeriod(&self, device_id: PCWSTR, default: i32, default_period: *mut i64, min_period: *mut i64) -> HRESULT;
+        unsafe fn SetDeviceFormat(
+            &self,
+            device_id: PCWSTR,
+            endpoint_format: *const WAVEFORMATEX,
+            mix_format: *const WAVEFORMATEX,
+        ) -> HRESULT;
+        unsafe fn GetProcessingPeriod(
+            &self,
+            device_id: PCWSTR,
+            default: i32,
+            default_period: *mut i64,
+            min_period: *mut i64,
+        ) -> HRESULT;
         unsafe fn SetProcessingPeriod(&self, device_id: PCWSTR, period: *const i64) -> HRESULT;
         unsafe fn GetShareMode(&self, device_id: PCWSTR, mode: *mut DeviceShareMode) -> HRESULT;
         unsafe fn SetShareMode(&self, device_id: PCWSTR, mode: *const DeviceShareMode) -> HRESULT;
-        unsafe fn GetPropertyValue(&self, device_id: PCWSTR, store_flag: i32, key: *const PROPERTYKEY, value: *mut PROPVARIANT) -> HRESULT;
-        unsafe fn SetPropertyValue(&self, device_id: PCWSTR, store_flag: i32, key: *const PROPERTYKEY, value: *const PROPVARIANT) -> HRESULT;
+        unsafe fn GetPropertyValue(
+            &self,
+            device_id: PCWSTR,
+            store_flag: i32,
+            key: *const PROPERTYKEY,
+            value: *mut PROPVARIANT,
+        ) -> HRESULT;
+        unsafe fn SetPropertyValue(
+            &self,
+            device_id: PCWSTR,
+            store_flag: i32,
+            key: *const PROPERTYKEY,
+            value: *const PROPVARIANT,
+        ) -> HRESULT;
         unsafe fn SetDefaultEndpoint(&self, device_id: PCWSTR, role: ERole) -> HRESULT;
         unsafe fn SetEndpointVisibility(&self, device_id: PCWSTR, visible: i32) -> HRESULT;
     }
@@ -251,7 +283,8 @@ mod platform {
         _data: [u8; 4],
     }
 
-    const CLSID_POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
+    const CLSID_POLICY_CONFIG_CLIENT: GUID =
+        GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
 
     fn enumerate_devices(
         enumerator: &IMMDeviceEnumerator,
@@ -287,19 +320,14 @@ mod platform {
                 };
 
                 let name = match device.OpenPropertyStore(STGM_READ) {
-                    Ok(store) => {
-                        match store.GetValue(&PKEY_Device_FriendlyName) {
-                            Ok(prop) => prop.to_string().trim().to_string(),
-                            Err(_) => format!("Audio Device {}", i),
-                        }
-                    }
+                    Ok(store) => match store.GetValue(&PKEY_Device_FriendlyName) {
+                        Ok(prop) => prop.to_string().trim().to_string(),
+                        Err(_) => format!("Audio Device {}", i),
+                    },
                     Err(_) => format!("Audio Device {}", i),
                 };
 
-                let is_default = default_id
-                    .as_ref()
-                    .map(|did| *did == id)
-                    .unwrap_or(false);
+                let is_default = default_id.as_ref().map(|did| *did == id).unwrap_or(false);
 
                 devices.push(AudioDevice {
                     id,
@@ -318,12 +346,9 @@ mod platform {
             // Initialize COM
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            )
-            .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                    .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
 
             // Get default output device
             let default_output_id = enumerator
@@ -337,8 +362,14 @@ mod platform {
                 .ok()
                 .and_then(|d| d.GetId().ok().map(|id| id.to_string().unwrap_or_default()));
 
-            let mut devices = enumerate_devices(&enumerator, eRender, "playback", &default_output_id);
-            devices.extend(enumerate_devices(&enumerator, eCapture, "recording", &default_input_id));
+            let mut devices =
+                enumerate_devices(&enumerator, eRender, "playback", &default_output_id);
+            devices.extend(enumerate_devices(
+                &enumerator,
+                eCapture,
+                "recording",
+                &default_input_id,
+            ));
 
             Ok(devices)
         }
@@ -348,33 +379,21 @@ mod platform {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-            let policy_config: IPolicyConfig = CoCreateInstance(
-                &CLSID_POLICY_CONFIG_CLIENT,
-                None,
-                CLSCTX_ALL,
-            )
-            .map_err(|e| format!("Failed to create PolicyConfig: {}", e))?;
+            let policy_config: IPolicyConfig =
+                CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL)
+                    .map_err(|e| format!("Failed to create PolicyConfig: {}", e))?;
 
             let wide_id: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
 
-            let hr = policy_config.SetDefaultEndpoint(
-                PCWSTR(wide_id.as_ptr()),
-                eConsole,
-            );
+            let hr = policy_config.SetDefaultEndpoint(PCWSTR(wide_id.as_ptr()), eConsole);
 
             if hr.is_err() {
                 return Err(format!("Failed to set default device: {:?}", hr));
             }
 
             // Also set for eMultimedia and eCommunications roles
-            let _ = policy_config.SetDefaultEndpoint(
-                PCWSTR(wide_id.as_ptr()),
-                eMultimedia,
-            );
-            let _ = policy_config.SetDefaultEndpoint(
-                PCWSTR(wide_id.as_ptr()),
-                eCommunications,
-            );
+            let _ = policy_config.SetDefaultEndpoint(PCWSTR(wide_id.as_ptr()), eMultimedia);
+            let _ = policy_config.SetDefaultEndpoint(PCWSTR(wide_id.as_ptr()), eCommunications);
 
             Ok(())
         }

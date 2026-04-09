@@ -119,10 +119,7 @@ pub fn clear() {
 }
 
 pub fn count() -> usize {
-    LOG_STATE
-        .lock()
-        .map(|s| s.entries.len())
-        .unwrap_or(0)
+    LOG_STATE.lock().map(|s| s.entries.len()).unwrap_or(0)
 }
 
 /// Bridge the standard `log` crate into our ring buffer so that Tauri's
@@ -142,9 +139,7 @@ impl log::Log for BufferLogger {
             log::Level::Debug => "debug",
             log::Level::Trace => "trace",
         };
-        let tag = record
-            .module_path()
-            .unwrap_or(record.target());
+        let tag = record.module_path().unwrap_or(record.target());
         push_log(level, tag, &format!("{}", record.args()));
     }
 

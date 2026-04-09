@@ -120,9 +120,7 @@ pub fn stop() {
 /// Returns the FPS of the current foreground application and its process name.
 #[cfg(target_os = "windows")]
 pub fn get_foreground_fps() -> Option<(u32, String)> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     let pid = unsafe {
         let hwnd = GetForegroundWindow();
@@ -171,13 +169,9 @@ fn run_etw_session() -> Result<(), String> {
 
         // --- Start trace session ---
         let mut session_handle = CONTROLTRACE_HANDLE::default();
-        StartTraceW(
-            &mut session_handle,
-            PCWSTR(session_wide.as_ptr()),
-            props,
-        )
-        .ok()
-        .map_err(|e| format!("StartTraceW failed: {e}"))?;
+        StartTraceW(&mut session_handle, PCWSTR(session_wide.as_ptr()), props)
+            .ok()
+            .map_err(|e| format!("StartTraceW failed: {e}"))?;
 
         // --- Enable providers ---
         enable_provider(session_handle, &DXGI_PROVIDER)?;
@@ -195,8 +189,7 @@ fn run_etw_session() -> Result<(), String> {
             PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
 
         // EventRecordCallback (offset 424)
-        *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) =
-            event_record_callback as usize;
+        *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) = event_record_callback as usize;
 
         let trace_handle = OpenTraceW(p);
         if trace_handle == INVALID_PROCESSTRACE_HANDLE {
@@ -213,16 +206,13 @@ fn run_etw_session() -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn enable_provider(
-    session: CONTROLTRACE_HANDLE,
-    provider: &GUID,
-) -> Result<(), String> {
+unsafe fn enable_provider(session: CONTROLTRACE_HANDLE, provider: &GUID) -> Result<(), String> {
     // EVENT_CONTROL_CODE_ENABLE_PROVIDER = 1, TRACE_LEVEL_INFORMATION = 4
     EnableTraceEx2(
         session,
         provider,
-        1, // EVENT_CONTROL_CODE_ENABLE_PROVIDER
-        4, // TRACE_LEVEL_INFORMATION
+        1,                     // EVENT_CONTROL_CODE_ENABLE_PROVIDER
+        4,                     // TRACE_LEVEL_INFORMATION
         0xFFFF_FFFF_FFFF_FFFF, // MatchAnyKeyword – all
         0,
         0,
@@ -284,7 +274,11 @@ fn get_fps_for_pid(pid: u32) -> Option<u32> {
     let one_sec_ago = now - Duration::from_secs(1);
     let count = times.iter().filter(|&&t| t >= one_sec_ago).count() as u32;
 
-    if count == 0 { None } else { Some(count) }
+    if count == 0 {
+        None
+    } else {
+        Some(count)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -296,8 +290,7 @@ fn process_name(pid: u32) -> Option<String> {
     };
 
     unsafe {
-        let handle =
-            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 260];
         let mut size = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(

@@ -1,9 +1,9 @@
 use crate::hardware;
 use crate::log_buffer;
+use std::collections::HashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
-use std::collections::HashMap;
 
 const PORT: u16 = 19210;
 
@@ -186,7 +186,10 @@ fn handle_status(query: &HashMap<String, String>) -> String {
         http_response(200, "application/json", &json)
     } else {
         let pawnio_state = pawnio.service_state.as_deref().unwrap_or("unknown");
-        let pawnio_driver = pawnio.driver_file_exists.map(|v| if v { "found" } else { "not found" }).unwrap_or("N/A");
+        let pawnio_driver = pawnio
+            .driver_file_exists
+            .map(|v| if v { "found" } else { "not found" })
+            .unwrap_or("N/A");
         let text = format!(
             "Status: running\nPID: {}\nVersion: {}\nLog lines: {}\nPawnIO: service={}, driver_file={}",
             pid, version, log_count, pawnio_state, pawnio_driver
@@ -197,7 +200,8 @@ fn handle_status(query: &HashMap<String, String>) -> String {
 
 fn handle_pawnio() -> String {
     let status = crate::get_pawnio_detailed_status();
-    let json = serde_json::to_string_pretty(&status).unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
+    let json = serde_json::to_string_pretty(&status)
+        .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
     http_response(200, "application/json", &json)
 }
 
@@ -224,7 +228,9 @@ fn handle_logs(query: &HashMap<String, String>) -> String {
     };
 
     let logs = if let Some(level) = query.get("level") {
-        logs.into_iter().filter(|e| e.level == level.as_str()).collect()
+        logs.into_iter()
+            .filter(|e| e.level == level.as_str())
+            .collect()
     } else {
         logs
     };
@@ -298,9 +304,8 @@ fn format_log_response(logs: &[log_buffer::LogEntry], query: &HashMap<String, St
 async fn handle_hardware() -> String {
     match hardware::get_hardware_info().await {
         Ok(data) => {
-            let json = serde_json::to_string_pretty(&data).unwrap_or_else(|e| {
-                format!("{{\"error\": \"Serialization failed: {}\"}}", e)
-            });
+            let json = serde_json::to_string_pretty(&data)
+                .unwrap_or_else(|e| format!("{{\"error\": \"Serialization failed: {}\"}}", e));
             http_response(200, "application/json", &json)
         }
         Err(e) => {

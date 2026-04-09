@@ -89,10 +89,5 @@ pub fn capture_window_error(error: &str, operation: &str) {
 /// Capture an LHM daemon error (Windows only)
 #[cfg(target_os = "windows")]
 pub fn capture_lhm_error(error: &str) {
-    capture_error(
-        &format!("[LHM] {}", error),
-        "lhm_daemon",
-        None,
-    );
+    capture_error(&format!("[LHM] {}", error), "lhm_daemon", None);
 }
-

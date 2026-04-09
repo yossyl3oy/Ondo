@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
@@ -16,6 +16,8 @@ const STORAGE_KEY = "ondo_settings";
 export function useSettings(): UseSettingsResult {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
+  const settingsRef = useRef<AppSettings>(DEFAULT_SETTINGS);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
 
   // Load settings on mount
   useEffect(() => {
@@ -37,12 +39,16 @@ export function useSettings(): UseSettingsResult {
       // Try to load from Tauri store first
       const stored = await invoke<AppSettings | null>("get_settings");
       if (stored) {
-        setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...stored }));
+        const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...stored });
+        settingsRef.current = loaded;
+        setSettings(loaded);
       } else {
         // Fallback to localStorage for development
         const localStored = localStorage.getItem(STORAGE_KEY);
         if (localStored) {
-          setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
+          const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
+          settingsRef.current = loaded;
+          setSettings(loaded);
         }
       }
     } catch (err) {
@@ -53,7 +59,9 @@ export function useSettings(): UseSettingsResult {
       const localStored = localStorage.getItem(STORAGE_KEY);
       if (localStored) {
         try {
-          setSettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
+          const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
+          settingsRef.current = loaded;
+          setSettings(loaded);
         } catch {
           // Use defaults
         }
@@ -63,57 +71,74 @@ export function useSettings(): UseSettingsResult {
     }
   };
 
+  const persistSettings = useCallback((updated: AppSettings, newSettings: Partial<AppSettings>) => {
+    saveChainRef.current = saveChainRef.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          // Try to save via Tauri
+          await invoke("save_settings", { settings: updated });
+
+          // Apply window settings
+          if (newSettings.alwaysOnTop !== undefined) {
+            // If enabling always on top, disable always on back first
+            if (newSettings.alwaysOnTop) {
+              await invoke("set_always_on_back", { enabled: false });
+            }
+            await invoke("set_always_on_top", { enabled: newSettings.alwaysOnTop });
+          }
+          if (newSettings.alwaysOnBack !== undefined) {
+            // If enabling always on back, disable always on top first
+            if (newSettings.alwaysOnBack) {
+              await invoke("set_always_on_top", { enabled: false });
+            }
+            await invoke("set_always_on_back", { enabled: newSettings.alwaysOnBack });
+          }
+          if (newSettings.position !== undefined) {
+            await invoke("set_window_position", { position: newSettings.position });
+          }
+          if (newSettings.autoStart !== undefined) {
+            await invoke("set_auto_start", { enabled: newSettings.autoStart });
+          }
+          if (newSettings.debugServer !== undefined) {
+            await invoke("toggle_debug_server", { enabled: newSettings.debugServer });
+          }
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          captureSettingsError(errorMessage, "save");
+        }
+      });
+
+    return saveChainRef.current;
+  }, []);
+
   const updateSettings = useCallback(async (newSettings: Partial<AppSettings>) => {
-    const updated = { ...settings, ...newSettings };
+    const updated = { ...settingsRef.current, ...newSettings };
+    settingsRef.current = updated;
     setSettings(updated);
 
     // Save to localStorage immediately
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-
-    try {
-      // Try to save via Tauri
-      await invoke("save_settings", { settings: updated });
-
-      // Apply window settings
-      if (newSettings.alwaysOnTop !== undefined) {
-        // If enabling always on top, disable always on back first
-        if (newSettings.alwaysOnTop) {
-          await invoke("set_always_on_back", { enabled: false });
-        }
-        await invoke("set_always_on_top", { enabled: newSettings.alwaysOnTop });
-      }
-      if (newSettings.alwaysOnBack !== undefined) {
-        // If enabling always on back, disable always on top first
-        if (newSettings.alwaysOnBack) {
-          await invoke("set_always_on_top", { enabled: false });
-        }
-        await invoke("set_always_on_back", { enabled: newSettings.alwaysOnBack });
-      }
-      if (newSettings.position !== undefined) {
-        await invoke("set_window_position", { position: newSettings.position });
-      }
-      if (newSettings.autoStart !== undefined) {
-        await invoke("set_auto_start", { enabled: newSettings.autoStart });
-      }
-      if (newSettings.debugServer !== undefined) {
-        await invoke("toggle_debug_server", { enabled: newSettings.debugServer });
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      captureSettingsError(errorMessage, "save");
-    }
-  }, [settings]);
+    await persistSettings(updated, newSettings);
+  }, [persistSettings]);
 
   const resetSettings = useCallback(async () => {
+    settingsRef.current = DEFAULT_SETTINGS;
     setSettings(DEFAULT_SETTINGS);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
 
-    try {
-      await invoke("save_settings", { settings: DEFAULT_SETTINGS });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      captureSettingsError(errorMessage, "reset");
-    }
+    saveChainRef.current = saveChainRef.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await invoke("save_settings", { settings: DEFAULT_SETTINGS });
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          captureSettingsError(errorMessage, "reset");
+        }
+      });
+
+    await saveChainRef.current;
   }, []);
 
   return {
