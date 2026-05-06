@@ -12,8 +12,8 @@
     "version:sync": "node scripts/sync-version.cjs"
   },
   "dependencies": {
-    "@sentry/react": "^10.50.0",
-    "@tauri-apps/api": "^2.10.1",
+    "@sentry/react": "^10.51.0",
+    "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-updater": "^2.10.1",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@sentry/vite-plugin": "^5.2.1",
-    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/cli": "^2.11.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
