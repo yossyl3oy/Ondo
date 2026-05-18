@@ -898,11 +898,6 @@
   align-items: center;
   gap: 6px;
   padding: 3px 6px;
-  background: rgba(10, 10, 30, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   animation: sectionSlideIn 0.3s ease;
 }
 
