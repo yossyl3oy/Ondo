@@ -34,9 +34,9 @@
   border-width: 0 0 2px 2px;
 }
 
-/* Mini mode: hide container background, border, and decorations */
+/* Mini mode: opaque container so OS glass/transparency effects don't bleed through */
 .app-container.mini {
-  background: transparent;
+  background: var(--hud-background-solid);
   border-left: none;
 }
 
