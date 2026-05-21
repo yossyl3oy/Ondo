@@ -23,7 +23,7 @@ pub fn start_monitoring(app: AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Initial check — emit even if the initial state is "maximized"
-        let initial = is_any_maximized_on_ondo_display(&app);
+        let initial = is_any_maximized_on_app_display(&app);
         LAST_STATE.store(initial, Ordering::Relaxed);
         if initial {
             let _ = app.emit("minimode-changed", MiniModePayload { active: true });
@@ -42,7 +42,7 @@ pub fn start_monitoring(app: AppHandle) {
             let check_maximized = !in_mini || tick % 5 == 0;
 
             if check_maximized {
-                let is_maximized = is_any_maximized_on_ondo_display(&app);
+                let is_maximized = is_any_maximized_on_app_display(&app);
                 let prev = LAST_STATE.load(Ordering::Relaxed);
 
                 if is_maximized != prev {
@@ -148,11 +148,11 @@ fn get_cursor_position() -> Option<(i32, i32)> {
 // the user's maximized app is still sitting there.
 
 #[cfg(target_os = "windows")]
-fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
+fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, HMONITOR, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowRect, IsWindowVisible, IsZoomed,
@@ -164,15 +164,15 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
     let ondo_hwnd_isize = ondo_hwnd.0 as isize;
 
     unsafe {
-        let ondo_monitor = MonitorFromWindow(HWND(ondo_hwnd.0), MONITOR_DEFAULTTONEAREST);
-        if ondo_monitor.0.is_null() {
+        let app_monitor = MonitorFromWindow(HWND(ondo_hwnd.0), MONITOR_DEFAULTTONEAREST);
+        if app_monitor.0.is_null() {
             return false;
         }
 
         // Cache Ondo's monitor rect so the enum callback can compare cheaply.
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        let screen_rect = if GetMonitorInfoW(ondo_monitor, &mut mi).as_bool() {
+        let screen_rect = if GetMonitorInfoW(app_monitor, &mut mi).as_bool() {
             Some(mi.rcMonitor)
         } else {
             None
@@ -180,14 +180,14 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
 
         struct State {
             ondo_hwnd: isize,
-            ondo_monitor: HMONITOR,
+            app_monitor: HMONITOR,
             screen_rect: Option<RECT>,
             found: bool,
         }
 
         let mut state = State {
             ondo_hwnd: ondo_hwnd_isize,
-            ondo_monitor,
+            app_monitor,
             screen_rect,
             found: false,
         };
@@ -202,10 +202,9 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
                 return BOOL(1);
             }
 
-            // Restrict to Ondo's monitor — windows on other displays don't
-            // count, since the user can still see Ondo there.
+            // Restrict to Ondo's monitor.
             let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            if mon != state.ondo_monitor {
+            if mon != state.app_monitor {
                 return BOOL(1);
             }
 
@@ -246,19 +245,12 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
 // menu or another app has focus.
 
 #[cfg(target_os = "macos")]
-fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
+fn is_any_maximized_on_app_display(_app: &AppHandle) -> bool {
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
-
-    // Note: Tauri's `outer_position()` returns physical pixels, which don't
-    // round-trip cleanly to CG's point-based display lookup in multi-display
-    // HiDPI setups (a window on the primary monitor can land "in" the
-    // secondary monitor's point space, falsely matching its maximized apps).
-    // We pull Ondo's display from the CG window list instead so both lookups
-    // share the same coordinate space.
 
     let list_ptr = unsafe {
         CGWindowListCopyWindowInfo(
@@ -287,36 +279,44 @@ fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
         ))
     }
 
-    fn is_ondo(dict: &CFDictionary<CFString, CFType>) -> bool {
+    fn read_pid(dict: &CFDictionary<CFString, CFType>) -> Option<i64> {
         use core_foundation::base::TCFType;
-        let owner_key = CFString::new("kCGWindowOwnerName");
-        let Some(v) = dict.find(&owner_key) else {
-            return false;
-        };
-        let owner: CFString = unsafe { CFString::wrap_under_get_rule(v.as_CFTypeRef() as _) };
-        owner.to_string() == "Ondo"
+        let key = CFString::new("kCGWindowOwnerPID");
+        dict.find(&key)
+            .and_then(|v| unsafe { CFNumber::wrap_under_get_rule(v.as_CFTypeRef() as _) }.to_i64())
     }
 
-    // First pass: find which display Ondo is on by reading its own CG bounds
-    // (same coordinate space we'll use for everything else).
-    let mut ondo_display: u32 = 0;
+    let our_pid = std::process::id() as i64;
+
+    // First pass: find which display Ondo is on by reading its own CG bounds.
+    // PID matching is name-independent, so dev/prod binary names both work.
+    let mut app_display: u32 = 0;
+    let mut app_window_area = 0.0;
     for i in 0..window_list.len() {
         let dict = unsafe { window_list.get_unchecked(i) };
-        if !is_ondo(&dict) {
+        if read_pid(&dict) != Some(our_pid) {
             continue;
         }
-        if let Some((x, y, w, h)) = read_bounds(&dict) {
-            ondo_display = display_containing_point(x + w / 2.0, y + h / 2.0);
-            if ondo_display != 0 {
-                break;
-            }
+        let Some((x, y, w, h)) = read_bounds(&dict) else {
+            continue;
+        };
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
+        let display = display_containing_point(x + w / 2.0, y + h / 2.0);
+        let area = w * h;
+        if display != 0 && area > app_window_area {
+            app_display = display;
+            app_window_area = area;
         }
     }
-    if ondo_display == 0 {
-        // No Ondo window in the list (hidden / minimized) or its center
-        // didn't map to a display — fall back to the main display so the
-        // most common setup still behaves sensibly.
-        ondo_display = unsafe { CGMainDisplayID() };
+    if app_display == 0 {
+        return false;
+    }
+
+    let app_display_bounds = unsafe { CGDisplayBounds(app_display) };
+    if app_display_bounds.size.width <= 0.0 || app_display_bounds.size.height <= 0.0 {
+        return false;
     }
 
     // Second pass: look for any maximized / fullscreen window on Ondo's display.
@@ -333,32 +333,23 @@ fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
             continue;
         }
 
-        // Skip Ondo windows
-        if is_ondo(&dict) {
+        // Skip our own windows, regardless of dev/prod app name.
+        if read_pid(&dict) == Some(our_pid) {
             continue;
         }
 
-        let Some((_x, _y, w, h)) = read_bounds(&dict) else {
+        let Some((x, y, w, h)) = read_bounds(&dict) else {
             continue;
         };
-        let (win_center_x, win_center_y) = (_x + w / 2.0, _y + h / 2.0);
+        let (win_center_x, win_center_y) = (x + w / 2.0, y + h / 2.0);
 
-        // Restrict to Ondo's display — windows on other displays don't count.
-        let fg_display = display_containing_point(win_center_x, win_center_y);
-        if fg_display != ondo_display {
+        // Restrict to Ondo's display.
+        if display_containing_point(win_center_x, win_center_y) != app_display {
             continue;
         }
-
-        // Get the display size to compare against
-        let (screen_w, screen_h) = unsafe {
-            (
-                CGDisplayPixelsWide(fg_display) as f64,
-                CGDisplayPixelsHigh(fg_display) as f64,
-            )
-        };
 
         // If the window covers >=95% of the screen → maximized / fullscreen
-        if w >= screen_w * 0.95 && h >= screen_h * 0.90 {
+        if w >= app_display_bounds.size.width * 0.95 && h >= app_display_bounds.size.height * 0.90 {
             return true;
         }
     }
@@ -366,8 +357,6 @@ fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
     false
 }
 
-/// Find the display that contains the given point.
-/// Returns the CGDirectDisplayID, or 0 if not found.
 #[cfg(target_os = "macos")]
 fn display_containing_point(x: f64, y: f64) -> u32 {
     unsafe {
@@ -416,12 +405,26 @@ struct CGPoint {
 }
 
 #[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> *const std::ffi::c_void;
-    fn CGMainDisplayID() -> u32;
-    fn CGDisplayPixelsWide(display: u32) -> usize;
-    fn CGDisplayPixelsHigh(display: u32) -> usize;
+    fn CGDisplayBounds(display: u32) -> CGRect;
     fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
     fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
     fn CGGetDisplaysWithPoint(
@@ -441,6 +444,6 @@ extern "C" {
 // ── Fallback for other platforms ────────────────────────────────────────────
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
+fn is_any_maximized_on_app_display(_app: &AppHandle) -> bool {
     false
 }
