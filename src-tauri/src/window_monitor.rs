@@ -151,6 +151,7 @@ fn get_cursor_position() -> Option<(i32, i32)> {
 fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
@@ -215,6 +216,23 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
                 class.as_str(),
                 "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
             ) {
+                return BOOL(1);
+            }
+
+            // Skip DWM-cloaked windows. UWP / Windows shell windows
+            // (Windows.UI.Core.CoreWindow et al.) keep a screen-sized rect
+            // alive in the background and would otherwise be misread as
+            // borderless fullscreen.
+            let mut cloaked: u32 = 0;
+            if DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            )
+            .is_ok()
+                && cloaked != 0
+            {
                 return BOOL(1);
             }
 
