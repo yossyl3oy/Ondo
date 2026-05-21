@@ -236,31 +236,42 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
                 return BOOL(0); // stop enumeration
             }
 
-            // Borderless fullscreen — window rect covers the full monitor.
+            // Borderless fullscreen — window rect aligns with the monitor on
+            // all sides (allow a few px slop for DPI rounding). We *don't*
+            // accept windows that merely contain the monitor: Chromium-based
+            // apps (Electron, VSCode, Slack, Discord) hold offscreen widget
+            // windows whose rect spans multiple monitors, which would
+            // otherwise be misread as borderless fullscreen.
             if let Some(scr) = state.screen_rect {
                 let mut rect: RECT = std::mem::zeroed();
-                if GetWindowRect(hwnd, &mut rect).is_ok()
-                    && rect.left <= scr.left
-                    && rect.top <= scr.top
-                    && rect.right >= scr.right
-                    && rect.bottom >= scr.bottom
-                {
-                    crate::log_info!(
-                        "WindowMonitor",
-                        "mini trigger: borderless class={:?} hwnd={:#x} rect=({},{},{},{}) screen=({},{},{},{})",
-                        class,
-                        hwnd.0 as isize,
-                        rect.left,
-                        rect.top,
-                        rect.right,
-                        rect.bottom,
-                        scr.left,
-                        scr.top,
-                        scr.right,
-                        scr.bottom
-                    );
-                    state.found = true;
-                    return BOOL(0);
+                if GetWindowRect(hwnd, &mut rect).is_ok() {
+                    let slop = 4;
+                    let scr_w = scr.right - scr.left;
+                    let scr_h = scr.bottom - scr.top;
+                    let win_w = rect.right - rect.left;
+                    let win_h = rect.bottom - rect.top;
+                    if (rect.left - scr.left).abs() <= slop
+                        && (rect.top - scr.top).abs() <= slop
+                        && (win_w - scr_w).abs() <= slop
+                        && (win_h - scr_h).abs() <= slop
+                    {
+                        crate::log_info!(
+                            "WindowMonitor",
+                            "mini trigger: borderless class={:?} hwnd={:#x} rect=({},{},{},{}) screen=({},{},{},{})",
+                            class,
+                            hwnd.0 as isize,
+                            rect.left,
+                            rect.top,
+                            rect.right,
+                            rect.bottom,
+                            scr.left,
+                            scr.top,
+                            scr.right,
+                            scr.bottom
+                        );
+                        state.found = true;
+                        return BOOL(0);
+                    }
                 }
             }
 
