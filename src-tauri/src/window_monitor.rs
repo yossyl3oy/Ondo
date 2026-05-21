@@ -155,7 +155,7 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
         GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowRect, IsWindowVisible, IsZoomed,
+        EnumWindows, GetClassNameW, GetWindowRect, IsWindowVisible, IsZoomed,
     };
 
     let Some(ondo_hwnd) = app.get_webview_window("main").and_then(|w| w.hwnd().ok()) else {
@@ -200,6 +200,20 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
             }
             if !IsWindowVisible(hwnd).as_bool() {
                 return BOOL(1);
+            }
+
+            // Skip shell windows — they always cover the full desktop and
+            // would otherwise be misread as borderless fullscreen.
+            let mut class_buf = [0u16; 64];
+            let len = GetClassNameW(hwnd, &mut class_buf);
+            if len > 0 {
+                let class = String::from_utf16_lossy(&class_buf[..len as usize]);
+                if matches!(
+                    class.as_str(),
+                    "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+                ) {
+                    return BOOL(1);
+                }
             }
 
             // Restrict to Ondo's monitor.
