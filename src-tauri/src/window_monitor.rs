@@ -246,22 +246,20 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
 // menu or another app has focus.
 
 #[cfg(target_os = "macos")]
-fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
+fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
 
-    // Get Ondo window position to determine which display it's on
-    let ondo_pos = app
-        .get_webview_window("main")
-        .and_then(|w| w.outer_position().ok());
-    let ondo_display = ondo_pos
-        .as_ref()
-        .map(|pos| display_containing_point(pos.x as f64, pos.y as f64));
+    // Note: Tauri's `outer_position()` returns physical pixels, which don't
+    // round-trip cleanly to CG's point-based display lookup in multi-display
+    // HiDPI setups (a window on the primary monitor can land "in" the
+    // secondary monitor's point space, falsely matching its maximized apps).
+    // We pull Ondo's display from the CG window list instead so both lookups
+    // share the same coordinate space.
 
-    // Get on-screen window list (excludes desktop elements)
     let list_ptr = unsafe {
         CGWindowListCopyWindowInfo(
             CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
@@ -275,9 +273,53 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
     let window_list: CFArray<CFDictionary<CFString, CFType>> =
         unsafe { CFArray::wrap_under_create_rule(list_ptr as *const _) };
 
-    // Iterate every on-screen window — front-to-back order doesn't matter
-    // for this check; we just need to know whether *any* of them is maximized
-    // on Ondo's display.
+    fn read_bounds(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64, f64, f64)> {
+        use core_foundation::base::TCFType;
+        let bounds_key = CFString::new("kCGWindowBounds");
+        let bounds_val = dict.find(&bounds_key)?;
+        let bounds_dict: CFDictionary<CFString, CFType> =
+            unsafe { CFDictionary::wrap_under_get_rule(bounds_val.as_CFTypeRef() as _) };
+        Some((
+            cf_dict_get_f64(&bounds_dict, "X").unwrap_or(0.0),
+            cf_dict_get_f64(&bounds_dict, "Y").unwrap_or(0.0),
+            cf_dict_get_f64(&bounds_dict, "Width").unwrap_or(0.0),
+            cf_dict_get_f64(&bounds_dict, "Height").unwrap_or(0.0),
+        ))
+    }
+
+    fn is_ondo(dict: &CFDictionary<CFString, CFType>) -> bool {
+        use core_foundation::base::TCFType;
+        let owner_key = CFString::new("kCGWindowOwnerName");
+        let Some(v) = dict.find(&owner_key) else {
+            return false;
+        };
+        let owner: CFString = unsafe { CFString::wrap_under_get_rule(v.as_CFTypeRef() as _) };
+        owner.to_string() == "Ondo"
+    }
+
+    // First pass: find which display Ondo is on by reading its own CG bounds
+    // (same coordinate space we'll use for everything else).
+    let mut ondo_display: u32 = 0;
+    for i in 0..window_list.len() {
+        let dict = unsafe { window_list.get_unchecked(i) };
+        if !is_ondo(&dict) {
+            continue;
+        }
+        if let Some((x, y, w, h)) = read_bounds(&dict) {
+            ondo_display = display_containing_point(x + w / 2.0, y + h / 2.0);
+            if ondo_display != 0 {
+                break;
+            }
+        }
+    }
+    if ondo_display == 0 {
+        // No Ondo window in the list (hidden / minimized) or its center
+        // didn't map to a display — fall back to the main display so the
+        // most common setup still behaves sensibly.
+        ondo_display = unsafe { CGMainDisplayID() };
+    }
+
+    // Second pass: look for any maximized / fullscreen window on Ondo's display.
     for i in 0..window_list.len() {
         let dict = unsafe { window_list.get_unchecked(i) };
 
@@ -292,60 +334,33 @@ fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
         }
 
         // Skip Ondo windows
-        let owner_key = CFString::new("kCGWindowOwnerName");
-        if let Some(v) = dict.find(&owner_key) {
-            let owner: CFString = unsafe { CFString::wrap_under_get_rule(v.as_CFTypeRef() as _) };
-            if owner.to_string() == "Ondo" {
-                continue;
-            }
+        if is_ondo(&dict) {
+            continue;
         }
 
-        // Read window bounds
-        let bounds_key = CFString::new("kCGWindowBounds");
-        let Some(bounds_val) = dict.find(&bounds_key) else {
+        let Some((_x, _y, w, h)) = read_bounds(&dict) else {
             continue;
         };
-        let bounds_dict: CFDictionary<CFString, CFType> =
-            unsafe { CFDictionary::wrap_under_get_rule(bounds_val.as_CFTypeRef() as _) };
-
-        let x = cf_dict_get_f64(&bounds_dict, "X").unwrap_or(0.0);
-        let y = cf_dict_get_f64(&bounds_dict, "Y").unwrap_or(0.0);
-        let w = cf_dict_get_f64(&bounds_dict, "Width").unwrap_or(0.0);
-        let h = cf_dict_get_f64(&bounds_dict, "Height").unwrap_or(0.0);
-
-        // Find which display this window is on
-        let win_center_x = x + w / 2.0;
-        let win_center_y = y + h / 2.0;
-        let fg_display = display_containing_point(win_center_x, win_center_y);
+        let (win_center_x, win_center_y) = (_x + w / 2.0, _y + h / 2.0);
 
         // Restrict to Ondo's display — windows on other displays don't count.
-        if let Some(od) = ondo_display {
-            if fg_display != od {
-                continue;
-            }
+        let fg_display = display_containing_point(win_center_x, win_center_y);
+        if fg_display != ondo_display {
+            continue;
         }
 
-        // Get the display size for the window's display
-        let (screen_w, screen_h) = if fg_display != 0 {
-            unsafe {
-                (
-                    CGDisplayPixelsWide(fg_display) as f64,
-                    CGDisplayPixelsHigh(fg_display) as f64,
-                )
-            }
-        } else {
-            unsafe {
-                let d = CGMainDisplayID();
-                (CGDisplayPixelsWide(d) as f64, CGDisplayPixelsHigh(d) as f64)
-            }
+        // Get the display size to compare against
+        let (screen_w, screen_h) = unsafe {
+            (
+                CGDisplayPixelsWide(fg_display) as f64,
+                CGDisplayPixelsHigh(fg_display) as f64,
+            )
         };
 
         // If the window covers >=95% of the screen → maximized / fullscreen
         if w >= screen_w * 0.95 && h >= screen_h * 0.90 {
             return true;
         }
-
-        // Not maximized; keep scanning other windows on this display.
     }
 
     false
