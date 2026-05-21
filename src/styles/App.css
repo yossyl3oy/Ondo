@@ -34,9 +34,9 @@
   border-width: 0 0 2px 2px;
 }
 
-/* Mini mode: opaque container so OS glass/transparency effects don't bleed through */
+/* Mini mode: transparent container so only the row chips show against the desktop */
 .app-container.mini {
-  background: var(--hud-background-solid);
+  background: transparent;
   border-left: none;
 }
 

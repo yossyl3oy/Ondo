@@ -1,6 +1,6 @@
 [package]
 name = "ondo"
-version = "0.1.9"
+version = "0.1.10"
 description = "Iron Man HUD-style hardware temperature monitoring widget"
 authors = ["Ondo"]
 license = "MIT"
@@ -22,7 +22,6 @@ sentry = "0.48"
 once_cell = "1.19"
 log = "0.4"
 sysinfo = "0.39"
-getrandom = "0.2"
 
 # Windows-specific dependencies for hardware monitoring
 [target.'cfg(windows)'.dependencies]

@@ -102,7 +102,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hiddenSections: [],
 };
 
-export type SectionType = "cpu" | "gpu" | "storage" | "motherboard" | "audio" | "network" | "display";
+// Runtime source of truth for valid section types. Used by migrateSettings to
+// drop stale/unknown sections from persisted user settings (e.g. removed
+// features) so the renderer never receives a key it can't dispatch.
+export const SECTION_TYPES = ["cpu", "gpu", "storage", "motherboard", "audio", "network", "display"] as const;
+
+export type SectionType = (typeof SECTION_TYPES)[number];
 
 export interface AudioDevice {
   id: string;

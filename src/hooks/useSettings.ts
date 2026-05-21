@@ -1,8 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings } from "../types";
-import { DEFAULT_SETTINGS } from "../types";
+import type { AppSettings, SectionType } from "../types";
+import { DEFAULT_SETTINGS, SECTION_TYPES } from "../types";
 import { captureSettingsError } from "../sentry";
+
+const VALID_SECTIONS = new Set<string>(SECTION_TYPES);
+
+// Keep only known section types and remove duplicates. Stale entries from
+// older builds (e.g. a removed "bluetooth" section) would otherwise survive
+// in persisted settings and crash the renderer when it tries to dispatch on
+// the unknown key.
+function sanitizeSectionList(raw: unknown): SectionType[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: SectionType[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    if (!VALID_SECTIONS.has(item)) continue;
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item as SectionType);
+  }
+  return out;
+}
 
 interface UseSettingsResult {
   settings: AppSettings;
@@ -25,7 +45,11 @@ export function useSettings(): UseSettingsResult {
   }, []);
 
   const migrateSettings = (s: AppSettings): AppSettings => {
-    // Ensure new section types are added to existing sectionOrder
+    // First drop anything that isn't a current SectionType (and dedupe).
+    s.sectionOrder = sanitizeSectionList(s.sectionOrder);
+    s.hiddenSections = sanitizeSectionList(s.hiddenSections);
+
+    // Then ensure newly-added default sections are present.
     for (const section of DEFAULT_SETTINGS.sectionOrder) {
       if (!s.sectionOrder.includes(section) && !s.hiddenSections.includes(section)) {
         s.sectionOrder.push(section);

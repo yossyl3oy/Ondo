@@ -2,96 +2,13 @@ use crate::hardware;
 use crate::log_buffer;
 use crate::window_debug;
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 const PORT: u16 = 19210;
 
-// --- Auth token (shared secret for mutating endpoints) ---
-//
-// Generated on first access, persisted to $CONFIG/Ondo/debug-token (0600 on
-// Unix). Required as ?token=... on POST endpoints. Read-only endpoints stay
-// open so log/hardware fetches from another machine keep working.
-
-static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
-
-fn token_file_path() -> PathBuf {
-    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("Ondo");
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join("debug-token")
-}
-
-fn auth_token() -> &'static str {
-    AUTH_TOKEN.get_or_init(|| {
-        let path = token_file_path();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let t = content.trim();
-            if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
-                return t.to_string();
-            }
-        }
-
-        let mut bytes = [0u8; 16];
-        if getrandom::getrandom(&mut bytes).is_err() {
-            // Fallback: time + pid mix. Weaker, but better than a fixed value.
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            let mixed = nanos.wrapping_mul((std::process::id() as u128).wrapping_add(1));
-            bytes.copy_from_slice(&mixed.to_le_bytes());
-        }
-        let token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-
-        if let Err(e) = std::fs::write(&path, &token) {
-            crate::log_error!("DebugServer", "Failed to write token file: {}", e);
-        } else {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            }
-        }
-        token
-    })
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
-fn check_auth(query: &HashMap<String, String>) -> Result<(), &'static str> {
-    match query.get("token") {
-        Some(t) if constant_time_eq(t.as_bytes(), auth_token().as_bytes()) => Ok(()),
-        Some(_) => Err("Invalid token"),
-        None => Err("Missing ?token= parameter — see debug-token file in app config dir"),
-    }
-}
-
 pub async fn start_debug_server(mut shutdown: oneshot::Receiver<()>) {
-    // Initialise (and persist) the auth token before the listener accepts any
-    // request. eprintln! goes to stderr only; the in-memory log buffer only
-    // records the file path so /logs readers can't see the secret itself.
-    let token = auth_token();
-    let token_path = token_file_path();
-    eprintln!("[Ondo] Debug server auth token: {}", token);
-    crate::log_info!(
-        "DebugServer",
-        "Auth token persisted at {} (required for POST endpoints)",
-        token_path.display()
-    );
-
     let addr = format!("0.0.0.0:{}", PORT);
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => {
@@ -141,19 +58,11 @@ pub async fn start_debug_server(mut shutdown: oneshot::Receiver<()>) {
                 (_, "/api/sensors") => handle_sensors().await,
                 (_, "/api/pawnio") => handle_pawnio(),
                 (_, "/api/window") => handle_window_info(),
-                ("POST", "/api/window/dwm") => match check_auth(&query) {
-                    Ok(_) => handle_window_dwm(&query),
-                    Err(msg) => http_response(401, "text/plain", msg),
-                },
                 (_, "/help") => handle_help(&query),
                 (_, "/status") => handle_status(&query),
                 (_, "/logs") => handle_logs(&query),
                 (_, "/logs/tail") => handle_logs_tail(&query),
                 (_, "/logs/search") => handle_logs_search(&query),
-                ("POST", "/clear") => match check_auth(&query) {
-                    Ok(_) => handle_clear(),
-                    Err(msg) => http_response(401, "text/plain", msg),
-                },
                 (_, "/") => handle_dashboard(),
                 _ => http_response(404, "text/plain", "Not Found"),
             };
@@ -189,7 +98,6 @@ fn http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
-        401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
         500 => "Internal Server Error",
@@ -229,17 +137,14 @@ fn handle_help(query: &HashMap<String, String>) -> String {
     {"method": "GET", "path": "/api/sensors", "description": "Raw sensor list (text)"},
     {"method": "GET", "path": "/api/pawnio", "description": "PawnIO driver status (JSON)"},
     {"method": "GET", "path": "/api/window", "description": "Main window state: HWND, class, styles, DWM attributes, injected DLLs (Windows only)"},
-    {"method": "POST", "path": "/api/window/dwm", "description": "Live-set DWM attribute. ?attr=backdrop|ncrendering|hostbackdrop|corner|transitions&value=...&token=<auth>"},
     {"method": "GET", "path": "/logs", "description": "All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware"},
     {"method": "GET", "path": "/logs/tail", "description": "Latest N lines. ?n=100 (default)"},
-    {"method": "GET", "path": "/logs/search", "description": "Regex search. ?q=<pattern>&limit=200"},
-    {"method": "POST", "path": "/clear", "description": "Clear log buffer. Requires ?token=<auth>"}
+    {"method": "GET", "path": "/logs/search", "description": "Regex search. ?q=<pattern>&limit=200"}
   ],
   "notes": [
     "Add ?format=json to any log endpoint for JSON output",
     "Default log format is plain text",
-    "POST endpoints require ?token= — value lives in $CONFIG/Ondo/debug-token (created on first launch)",
-    "/api/window/dwm values — backdrop: auto|none|mica|acrylic|tabbed | ncrendering: enabled|disabled|usewindowstyle | hostbackdrop: true|false | corner: default|donotround|round|roundsmall | transitions: true|false (force-disable)"
+    "All endpoints are read-only — no mutating actions are exposed"
   ]
 }"#;
         http_response(200, "application/json", json)
@@ -255,27 +160,12 @@ Ondo Debug Server - API Reference
   GET  /api/sensors     Raw sensor list (text)
   GET  /api/pawnio      PawnIO driver status (JSON)
   GET  /api/window      Main window state: HWND, class, styles, DWM attributes, injected DLLs (Windows only)
-  POST /api/window/dwm  Live-set DWM attribute. ?attr=...&value=...&token=<auth>
   GET  /logs            All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware
   GET  /logs/tail       Latest N lines. ?n=100 (default)
   GET  /logs/search     Regex search. ?q=<pattern>&limit=200
-  POST /clear           Clear log buffer. Requires ?token=<auth>
-
-DWM attribute values (POST /api/window/dwm):
-  attr=backdrop       value=auto|none|mica|acrylic|tabbed
-  attr=ncrendering    value=enabled|disabled|usewindowstyle
-  attr=hostbackdrop   value=true|false
-  attr=corner         value=default|donotround|round|roundsmall
-  attr=transitions    value=true|false   (force-disable)
-
-Auth:
-  POST endpoints require ?token=<value-from-debug-token-file>.
-  Token lives in:
-    Windows: %APPDATA%/Ondo/debug-token
-    macOS:   ~/Library/Application Support/Ondo/debug-token
-    Linux:   $XDG_CONFIG_HOME/Ondo/debug-token
 
 Notes:
+  - All endpoints are read-only — no mutating actions are exposed
   - Add ?format=json to any log endpoint for JSON output
   - Default log format is plain text";
         http_response(200, "text/plain", text)
@@ -333,30 +223,6 @@ fn handle_window_info() -> String {
             let json = serde_json::json!({ "error": e }).to_string();
             http_response(500, "application/json", &json)
         }
-    }
-}
-
-fn handle_window_dwm(query: &HashMap<String, String>) -> String {
-    let attr = match query.get("attr") {
-        Some(s) if !s.is_empty() => s.as_str(),
-        _ => {
-            return http_response(
-                400,
-                "text/plain",
-                "Missing ?attr= parameter. Try: backdrop|ncrendering|hostbackdrop|corner|transitions",
-            )
-        }
-    };
-    let value = match query.get("value") {
-        Some(s) if !s.is_empty() => s.as_str(),
-        _ => return http_response(400, "text/plain", "Missing ?value= parameter"),
-    };
-    match window_debug::set_dwm_attribute(attr, value) {
-        Ok(msg) => {
-            crate::log_info!("WindowDebug", "{}", msg);
-            http_response(200, "text/plain", &msg)
-        }
-        Err(e) => http_response(400, "text/plain", &e),
     }
 }
 
@@ -424,11 +290,6 @@ fn handle_logs_search(query: &HashMap<String, String>) -> String {
     let logs = &logs[start..];
 
     format_log_response(logs, query)
-}
-
-fn handle_clear() -> String {
-    log_buffer::clear();
-    http_response(200, "text/plain", "Log buffer cleared")
 }
 
 fn format_log_response(logs: &[log_buffer::LogEntry], query: &HashMap<String, String>) -> String {
@@ -584,10 +445,6 @@ fn handle_dashboard() -> String {
   .log-entry .lvl-warn { color: #ff0; }
   .log-entry .lvl-info { color: #0f0; }
   .log-entry .lvl-debug { color: #888; }
-  .ctrl-row { display:flex; align-items:center; gap:6px; margin:4px 0; flex-wrap:wrap; }
-  .ctrl-label { color:#0af; font-size:11px; min-width:140px; }
-  .ctrl-row button { background:#0a3d62; color:#0ff; border:1px solid #0a5d92; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:inherit; font-size:11px; }
-  .ctrl-row button:hover { background:#0a5d92; color:#fff; }
 </style>
 </head>
 <body>
@@ -598,7 +455,7 @@ fn handle_dashboard() -> String {
   <div class="tab active" onclick="showTab('hardware')">Hardware Data</div>
   <div class="tab" onclick="showTab('sensors')">Raw Sensors</div>
   <div class="tab" onclick="showTab('logs')">App Logs</div>
-  <div class="tab" onclick="showTab('window')">Window / DWM</div>
+  <div class="tab" onclick="showTab('window')">Window</div>
 </div>
 
 <div id="hardware-tab"></div>
@@ -606,49 +463,8 @@ fn handle_dashboard() -> String {
 <div id="logs-tab" style="display:none"><pre id="logs-pre">Loading...</pre></div>
 <div id="window-tab" style="display:none">
   <div class="section">
-    <h2 style="margin-top:0">Auth token</h2>
-    <div style="font-size:11px;color:#888;margin-bottom:8px">POST endpoints require the token from <code>$CONFIG/Ondo/debug-token</code>. Paste it once — saved in this browser's localStorage.</div>
-    <div class="ctrl-row">
-      <span class="ctrl-label">token</span>
-      <input id="token-input" type="password" placeholder="32-hex token" style="background:#0d1b2a;color:#0ff;border:1px solid #0a3d62;padding:4px 8px;border-radius:3px;font-family:inherit;font-size:11px;width:320px" />
-      <button onclick="saveToken()">Save</button>
-      <button onclick="clearToken()">Clear</button>
-      <span id="token-status" style="font-size:11px;color:#888"></span>
-    </div>
-  </div>
-  <div class="section">
-    <h2 style="margin-top:0">Live DWM controls</h2>
-    <div style="font-size:11px;color:#888;margin-bottom:8px">Click to apply, then watch the window — these are real-time and let you isolate which attribute Windhawk is overriding.</div>
-    <div class="ctrl-row"><span class="ctrl-label">backdrop</span>
-      <button onclick="setDwm('backdrop','none')">none</button>
-      <button onclick="setDwm('backdrop','auto')">auto</button>
-      <button onclick="setDwm('backdrop','mica')">mica</button>
-      <button onclick="setDwm('backdrop','acrylic')">acrylic</button>
-      <button onclick="setDwm('backdrop','tabbed')">tabbed</button>
-    </div>
-    <div class="ctrl-row"><span class="ctrl-label">ncrendering</span>
-      <button onclick="setDwm('ncrendering','disabled')">disabled</button>
-      <button onclick="setDwm('ncrendering','enabled')">enabled</button>
-      <button onclick="setDwm('ncrendering','usewindowstyle')">usewindowstyle</button>
-    </div>
-    <div class="ctrl-row"><span class="ctrl-label">hostbackdrop</span>
-      <button onclick="setDwm('hostbackdrop','false')">false</button>
-      <button onclick="setDwm('hostbackdrop','true')">true</button>
-    </div>
-    <div class="ctrl-row"><span class="ctrl-label">corner</span>
-      <button onclick="setDwm('corner','default')">default</button>
-      <button onclick="setDwm('corner','donotround')">donotround</button>
-      <button onclick="setDwm('corner','round')">round</button>
-      <button onclick="setDwm('corner','roundsmall')">roundsmall</button>
-    </div>
-    <div class="ctrl-row"><span class="ctrl-label">transitions force-off</span>
-      <button onclick="setDwm('transitions','true')">true</button>
-      <button onclick="setDwm('transitions','false')">false</button>
-    </div>
-    <div id="dwm-status" style="margin-top:8px;font-size:11px;color:#0f0;min-height:14px"></div>
-  </div>
-  <div class="section">
-    <h2 style="margin-top:0">Current state</h2>
+    <h2 style="margin-top:0">Window state</h2>
+    <div style="font-size:11px;color:#888;margin-bottom:8px">Read-only snapshot of HWND, styles, DWM attributes, and injected modules (Windows only).</div>
     <pre id="window-pre">Loading...</pre>
   </div>
 </div>
@@ -722,7 +538,7 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === name));
   if (name === 'sensors') fetchSensors();
   if (name === 'logs') fetchLogs();
-  if (name === 'window') { fetchWindow(); updateTokenStatus(); }
+  if (name === 'window') fetchWindow();
 }
 
 async function fetchHardware() {
@@ -768,54 +584,6 @@ async function fetchWindow() {
     document.getElementById('window-pre').textContent = text;
   } catch (e) {
     document.getElementById('window-pre').textContent = 'Fetch error: ' + e;
-  }
-}
-
-function getToken() { return localStorage.getItem('ondo-debug-token') || ''; }
-
-function updateTokenStatus() {
-  const el = document.getElementById('token-status');
-  if (!el) return;
-  const t = getToken();
-  el.style.color = t ? '#0f0' : '#888';
-  el.textContent = t ? '(saved · ' + t.length + ' chars)' : '(no token — write actions will fail)';
-}
-
-function saveToken() {
-  const v = document.getElementById('token-input').value.trim();
-  if (!v) return;
-  localStorage.setItem('ondo-debug-token', v);
-  document.getElementById('token-input').value = '';
-  updateTokenStatus();
-}
-
-function clearToken() {
-  localStorage.removeItem('ondo-debug-token');
-  updateTokenStatus();
-}
-
-async function setDwm(attr, value) {
-  const status = document.getElementById('dwm-status');
-  const token = getToken();
-  if (!token) {
-    status.style.color = '#f44';
-    status.textContent = 'No auth token saved — paste it in the box above first.';
-    return;
-  }
-  status.style.color = '#ff0';
-  status.textContent = 'Applying ' + attr + '=' + value + '...';
-  try {
-    const url = '/api/window/dwm?attr=' + encodeURIComponent(attr)
-      + '&value=' + encodeURIComponent(value)
-      + '&token=' + encodeURIComponent(token);
-    const r = await fetch(url, { method: 'POST' });
-    const text = await r.text();
-    status.style.color = r.ok ? '#0f0' : '#f44';
-    status.textContent = (r.ok ? 'OK: ' : 'Error (' + r.status + '): ') + text;
-    fetchWindow();
-  } catch (e) {
-    status.style.color = '#f44';
-    status.textContent = 'Fetch error: ' + e;
   }
 }
 

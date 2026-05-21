@@ -314,94 +314,9 @@ fn list_suspicious_modules() -> Vec<String> {
     out
 }
 
-// ── DWM attribute writers ────────────────────────────────────────────────────
-
-#[cfg(target_os = "windows")]
-pub fn set_dwm_attribute(attr_name: &str, value: &str) -> Result<String, String> {
-    use windows::Win32::Graphics::Dwm::*;
-
-    let raw = current_hwnd_raw();
-    if raw == 0 {
-        return Err("Main window HWND not registered yet".into());
-    }
-    let hwnd = windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void);
-
-    let (attr, encoded) = match attr_name {
-        "backdrop" => {
-            let v: i32 = match value.to_lowercase().as_str() {
-                "auto" => 0,
-                "none" => 1,
-                "main" | "mica" | "mainwindow" => 2,
-                "transient" | "acrylic" | "transientwindow" => 3,
-                "tabbed" | "mica-alt" | "tabbedwindow" => 4,
-                other => return Err(format!("Unknown backdrop value: {}", other)),
-            };
-            (DWMWA_SYSTEMBACKDROP_TYPE, v)
-        }
-        "ncrendering" => {
-            let v: i32 = match value.to_lowercase().as_str() {
-                "usewindowstyle" => 0,
-                "disabled" => 1,
-                "enabled" => 2,
-                other => return Err(format!("Unknown ncrendering value: {}", other)),
-            };
-            (DWMWA_NCRENDERING_POLICY, v)
-        }
-        "hostbackdrop" => {
-            let v: i32 = parse_bool(value)? as i32;
-            (DWMWA_USE_HOSTBACKDROPBRUSH, v)
-        }
-        "corner" => {
-            let v: i32 = match value.to_lowercase().as_str() {
-                "default" => 0,
-                "donotround" | "square" => 1,
-                "round" => 2,
-                "roundsmall" => 3,
-                other => return Err(format!("Unknown corner value: {}", other)),
-            };
-            (DWMWA_WINDOW_CORNER_PREFERENCE, v)
-        }
-        "transitions" => {
-            let v: i32 = parse_bool(value)? as i32;
-            (DWMWA_TRANSITIONS_FORCEDISABLED, v)
-        }
-        other => return Err(format!("Unknown attribute: {}", other)),
-    };
-
-    let res = unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            attr,
-            &encoded as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<i32>() as u32,
-        )
-    };
-    match res {
-        Ok(_) => Ok(format!(
-            "Set {} = {} (raw {}) on HWND 0x{:X}",
-            attr_name, value, encoded, raw
-        )),
-        Err(e) => Err(format!("DwmSetWindowAttribute failed: {}", e)),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn parse_bool(s: &str) -> Result<bool, String> {
-    match s.to_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        other => Err(format!("Expected boolean, got: {}", other)),
-    }
-}
-
 // ── Non-Windows stubs ────────────────────────────────────────────────────────
 
 #[cfg(not(target_os = "windows"))]
 pub fn get_window_info() -> Result<WindowInfo, String> {
     Err("Window debug is only available on Windows".into())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn set_dwm_attribute(_attr_name: &str, _value: &str) -> Result<String, String> {
-    Err("DWM attributes are only available on Windows".into())
 }

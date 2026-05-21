@@ -112,12 +112,6 @@ pub fn search(pattern: &str) -> Vec<LogEntry> {
         .unwrap_or_default()
 }
 
-pub fn clear() {
-    if let Ok(mut state) = LOG_STATE.lock() {
-        state.entries.clear();
-    }
-}
-
 pub fn count() -> usize {
     LOG_STATE.lock().map(|s| s.entries.len()).unwrap_or(0)
 }
