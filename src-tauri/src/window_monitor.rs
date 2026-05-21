@@ -149,7 +149,8 @@ fn get_cursor_position() -> Option<(i32, i32)> {
 
 #[cfg(target_os = "windows")]
 fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, HMONITOR, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
