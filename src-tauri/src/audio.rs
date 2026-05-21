@@ -223,6 +223,11 @@ mod platform {
 // ============================================================
 #[cfg(target_os = "windows")]
 mod platform {
+    // IPolicyConfig (below) is a COM interface whose method names must match
+    // the Windows vtable verbatim; the macro expands them into multiple items
+    // (trait, vtable struct, wrappers), so silence the lint module-wide.
+    #![allow(non_snake_case)]
+
     use super::AudioDevice;
     use windows::core::{GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;

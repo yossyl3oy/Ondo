@@ -189,7 +189,8 @@ fn run_etw_session() -> Result<(), String> {
             PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
 
         // EventRecordCallback (offset 424)
-        *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) = event_record_callback as usize;
+        *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) =
+            event_record_callback as *const () as usize;
 
         let trace_handle = OpenTraceW(p);
         if trace_handle == INVALID_PROCESSTRACE_HANDLE {
