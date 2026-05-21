@@ -55,20 +55,34 @@ Temperature data is retrieved via system APIs.
 
 Enable the Debug Server in Settings to start an HTTP server on port **19210**, allowing you to retrieve logs and sensor data over LAN.
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/` | GET | Dashboard (HTML) — tabbed view of hardware, sensors, and logs |
-| `/help` | GET | API reference. Add `?format=json` for JSON output |
-| `/status` | GET | Process state (PID, version, log count, PawnIO status) |
-| `/api/hardware` | GET | Hardware sensor data (JSON) |
-| `/api/sensors` | GET | Raw sensor list (text) |
-| `/api/pawnio` | GET | PawnIO driver status (JSON, Windows only) |
-| `/logs` | GET | All logs. Filters: `?since=<epoch_ms>&limit=N&level=info&tag=Hardware` |
-| `/logs/tail` | GET | Latest N lines. `?n=100` (default) |
-| `/logs/search` | GET | Regex search. `?q=<pattern>&limit=200` |
-| `/clear` | POST | Clear log buffer |
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/` | GET | — | Dashboard (HTML) — tabbed view of hardware, sensors, logs, and window/DWM |
+| `/help` | GET | — | API reference. Add `?format=json` for JSON output |
+| `/status` | GET | — | Process state (PID, version, log count, PawnIO status) |
+| `/api/hardware` | GET | — | Hardware sensor data (JSON) |
+| `/api/sensors` | GET | — | Raw sensor list (text) |
+| `/api/pawnio` | GET | — | PawnIO driver status (JSON, Windows only) |
+| `/api/window` | GET | — | Main window state: HWND, class, styles, DWM attributes, injected DLLs (Windows only) |
+| `/api/window/dwm` | POST | token | Live-set a DWM attribute. `?attr=...&value=...&token=...` |
+| `/logs` | GET | — | All logs. Filters: `?since=<epoch_ms>&limit=N&level=info&tag=Hardware` |
+| `/logs/tail` | GET | — | Latest N lines. `?n=100` (default) |
+| `/logs/search` | GET | — | Regex search. `?q=<pattern>&limit=200` |
+| `/clear` | POST | token | Clear log buffer |
 
 Add `?format=json` to any log endpoint for JSON output. Default format is plain text.
+
+### Auth token (POST endpoints)
+
+`POST` endpoints require a shared-secret token because the server binds to `0.0.0.0`. On first launch the app generates a 32-hex token and writes it to:
+
+- Windows: `%APPDATA%/Ondo/debug-token`
+- macOS: `~/Library/Application Support/Ondo/debug-token`
+- Linux: `$XDG_CONFIG_HOME/Ondo/debug-token`
+
+It's also printed to stderr on startup. The token is **not** written to the in-memory log buffer that `/logs` exposes. To rotate, stop the app, delete the file, and restart.
+
+The dashboard's *Window / DWM* tab has an input that stores the token in `localStorage`.
 
 ```bash
 # Example usage (Mac to Windows over LAN)
@@ -76,6 +90,10 @@ curl -s "http://<WINDOWS_IP>:19210/status"
 curl -s "http://<WINDOWS_IP>:19210/logs/tail?n=50"
 curl -s "http://<WINDOWS_IP>:19210/api/hardware"
 curl -s "http://<WINDOWS_IP>:19210/logs/search?q=error&format=json"
+
+# Write endpoints — token required
+TOKEN=$(ssh windows-host 'cat $APPDATA/Ondo/debug-token')
+curl -sX POST "http://<WINDOWS_IP>:19210/api/window/dwm?attr=backdrop&value=none&token=$TOKEN"
 ```
 
 ## Tech Stack

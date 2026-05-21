@@ -9,6 +9,7 @@ mod hardware;
 mod log_buffer;
 mod settings;
 mod tray;
+mod window_debug;
 mod window_monitor;
 
 use serde::{Deserialize, Serialize};
@@ -707,6 +708,14 @@ fn main() {
                     let _ = window.set_always_on_bottom(true);
                 } else if startup_always_on_top {
                     let _ = window.set_always_on_top(true);
+                }
+
+                // Register HWND for the window-debug endpoints (Windows only)
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(hwnd) = window.hwnd() {
+                        window_debug::set_main_hwnd_raw(hwnd.0 as isize);
+                    }
                 }
             }
 
