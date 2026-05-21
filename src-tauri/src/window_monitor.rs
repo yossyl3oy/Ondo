@@ -206,14 +206,16 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
             // would otherwise be misread as borderless fullscreen.
             let mut class_buf = [0u16; 64];
             let len = GetClassNameW(hwnd, &mut class_buf);
-            if len > 0 {
-                let class = String::from_utf16_lossy(&class_buf[..len as usize]);
-                if matches!(
-                    class.as_str(),
-                    "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-                ) {
-                    return BOOL(1);
-                }
+            let class = if len > 0 {
+                String::from_utf16_lossy(&class_buf[..len as usize])
+            } else {
+                String::new()
+            };
+            if matches!(
+                class.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            ) {
+                return BOOL(1);
             }
 
             // Restrict to Ondo's monitor.
@@ -224,6 +226,12 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
 
             // Native Win32 maximized state.
             if IsZoomed(hwnd).as_bool() {
+                crate::log_info!(
+                    "WindowMonitor",
+                    "mini trigger: IsZoomed class={:?} hwnd={:#x}",
+                    class,
+                    hwnd.0 as isize
+                );
                 state.found = true;
                 return BOOL(0); // stop enumeration
             }
@@ -237,6 +245,20 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
                     && rect.right >= scr.right
                     && rect.bottom >= scr.bottom
                 {
+                    crate::log_info!(
+                        "WindowMonitor",
+                        "mini trigger: borderless class={:?} hwnd={:#x} rect=({},{},{},{}) screen=({},{},{},{})",
+                        class,
+                        hwnd.0 as isize,
+                        rect.left,
+                        rect.top,
+                        rect.right,
+                        rect.bottom,
+                        scr.left,
+                        scr.top,
+                        scr.right,
+                        scr.bottom
+                    );
                     state.found = true;
                     return BOOL(0);
                 }

@@ -659,7 +659,8 @@ fn main() {
     let startup_position = initial_settings.position.clone();
     let startup_always_on_top = initial_settings.always_on_top;
     let startup_always_on_back = initial_settings.always_on_back;
-    let startup_debug_server = initial_settings.debug_server;
+    // TEMP: force debug server on for mini-mode diagnostics
+    let startup_debug_server = true;
     let startup_window_state = initial_settings.window_state.clone();
 
     tauri::Builder::default()
