@@ -15,15 +15,15 @@ struct CursorNearPayload {
     near: bool,
 }
 
-/// Start background monitoring for maximized/fullscreen foreground windows.
-/// Emits `"minimode-changed"` event when the state toggles.
+/// Start background monitoring for maximized/fullscreen windows on Ondo's
+/// display. Emits `"minimode-changed"` whenever the answer flips.
 pub fn start_monitoring(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Brief delay to let the frontend set up its event listener
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Initial check — emit even if the initial state is "maximized"
-        let initial = is_foreground_maximized(&app);
+        let initial = is_any_maximized_on_ondo_display(&app);
         LAST_STATE.store(initial, Ordering::Relaxed);
         if initial {
             let _ = app.emit("minimode-changed", MiniModePayload { active: true });
@@ -37,12 +37,12 @@ pub fn start_monitoring(app: AppHandle) {
             let interval = if in_mini { 200 } else { 1000 };
             tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
 
-            // Check foreground maximized state every 1s (every 5th tick in mini mode)
+            // Re-check display occupancy every 1s (every 5th tick in mini mode)
             tick = tick.wrapping_add(1);
             let check_maximized = !in_mini || tick % 5 == 0;
 
             if check_maximized {
-                let is_maximized = is_foreground_maximized(&app);
+                let is_maximized = is_any_maximized_on_ondo_display(&app);
                 let prev = LAST_STATE.load(Ordering::Relaxed);
 
                 if is_maximized != prev {
@@ -140,164 +140,112 @@ fn get_cursor_position() -> Option<(i32, i32)> {
 }
 
 // ── Windows implementation ──────────────────────────────────────────────────
+//
+// We don't care which window is in the foreground. As long as *any* visible
+// top-level window on Ondo's monitor is maximized (or covers the full screen),
+// mini mode stays on. This way opening the Start menu, clicking the desktop,
+// or alt-tabbing to a small utility window doesn't toggle mini mode off while
+// the user's maximized app is still sitting there.
 
 #[cfg(target_os = "windows")]
-fn is_foreground_maximized(app: &AppHandle) -> bool {
-    use windows::Win32::Graphics::Gdi::MonitorFromWindow;
-    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, HMONITOR, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect, IsZoomed,
-        GWL_STYLE, GW_OWNER, WS_POPUP,
+        EnumWindows, GetWindowRect, IsWindowVisible, IsZoomed,
     };
 
+    let Some(ondo_hwnd) = app.get_webview_window("main").and_then(|w| w.hwnd().ok()) else {
+        return false;
+    };
+    let ondo_hwnd_isize = ondo_hwnd.0 as isize;
+
     unsafe {
-        let fg = GetForegroundWindow();
-        if fg.0 == std::ptr::null_mut() {
+        let ondo_monitor = MonitorFromWindow(HWND(ondo_hwnd.0), MONITOR_DEFAULTTONEAREST);
+        if ondo_monitor.0.is_null() {
             return false;
         }
 
-        // Get Ondo's window handle for monitor comparison
-        let ondo_hwnd = app.get_webview_window("main").and_then(|w| w.hwnd().ok());
-
-        // Skip if the foreground window is Ondo itself
-        if let Some(hwnd) = ondo_hwnd {
-            if fg.0 as isize == hwnd.0 as isize {
-                return false;
-            }
-        }
-
-        // Skip shell windows that should not affect mini mode:
-        // - Progman / WorkerW: desktop wallpaper
-        // - Shell_TrayWnd: primary taskbar
-        // - Shell_SecondaryTrayWnd: secondary-monitor taskbar
-        let mut class_buf = [0u16; 64];
-        let len = GetClassNameW(fg, &mut class_buf) as usize;
-        if len > 0 {
-            let class_name = String::from_utf16_lossy(&class_buf[..len]);
-            if class_name == "Progman"
-                || class_name == "WorkerW"
-                || class_name == "Shell_TrayWnd"
-                || class_name == "Shell_SecondaryTrayWnd"
-            {
-                return LAST_STATE.load(Ordering::Relaxed);
-            }
-        }
-
-        // Skip all explorer.exe windows (taskbar, start menu, notifications,
-        // XAML-based shell elements on Windows 11, etc.)
-        if is_explorer_process(fg) {
-            return LAST_STATE.load(Ordering::Relaxed);
-        }
-
-        // If the foreground window is a popup (e.g. menu, dropdown, tooltip),
-        // check its owner window instead. This prevents mini mode from toggling
-        // off when a maximized app opens a submenu or context menu.
-        let mut target = fg;
-        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
-        if (style & WS_POPUP.0) != 0 {
-            let owner = GetWindow(fg, GW_OWNER);
-            if let Ok(owner) = owner {
-                if owner.0 != std::ptr::null_mut() {
-                    target = owner;
-                }
-            }
-        }
-
-        // Skip if the target window is Ondo itself
-        if let Some(hwnd) = ondo_hwnd {
-            if target.0 as isize == hwnd.0 as isize {
-                return false;
-            }
-        }
-
-        // Determine which monitor the target window is on
-        let fg_monitor = MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST);
-
-        // Only trigger mini mode if the target window is on the same monitor as Ondo
-        if let Some(hwnd) = ondo_hwnd {
-            let ondo_monitor = MonitorFromWindow(
-                windows::Win32::Foundation::HWND(hwnd.0),
-                MONITOR_DEFAULTTONEAREST,
-            );
-            if fg_monitor != ondo_monitor {
-                return false;
-            }
-        }
-
-        // Check Win32 maximized state first
-        if IsZoomed(target).as_bool() {
-            return true;
-        }
-
-        // Also detect fullscreen windows (e.g. video players) by checking if
-        // the window covers the entire monitor
-        let mut win_rect = std::mem::zeroed();
-        if GetWindowRect(target, &mut win_rect).is_err() {
-            return false;
-        }
-
+        // Cache Ondo's monitor rect so the enum callback can compare cheaply.
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if !GetMonitorInfoW(fg_monitor, &mut mi).as_bool() {
-            return false;
-        }
-
-        let scr = mi.rcMonitor;
-        win_rect.left <= scr.left
-            && win_rect.top <= scr.top
-            && win_rect.right >= scr.right
-            && win_rect.bottom >= scr.bottom
-    }
-}
-
-/// Check if the given window belongs to explorer.exe.
-#[cfg(target_os = "windows")]
-fn is_explorer_process(hwnd: windows::Win32::Foundation::HWND) -> bool {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-
-    unsafe {
-        let mut pid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == 0 {
-            return false;
-        }
-
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return false;
-        };
-
-        let mut buf = [0u16; 260];
-        let mut len = buf.len() as u32;
-        let result = if QueryFullProcessImageNameW(
-            handle,
-            PROCESS_NAME_FORMAT(0),
-            windows::core::PWSTR(buf.as_mut_ptr()),
-            &mut len,
-        )
-        .is_ok()
-        {
-            let path = String::from_utf16_lossy(&buf[..len as usize]);
-            let lower = path.to_ascii_lowercase();
-            lower.ends_with("\\explorer.exe") || lower.ends_with("/explorer.exe")
+        let screen_rect = if GetMonitorInfoW(ondo_monitor, &mut mi).as_bool() {
+            Some(mi.rcMonitor)
         } else {
-            false
+            None
         };
-        let _ = CloseHandle(handle);
-        result
+
+        struct State {
+            ondo_hwnd: isize,
+            ondo_monitor: HMONITOR,
+            screen_rect: Option<RECT>,
+            found: bool,
+        }
+
+        let mut state = State {
+            ondo_hwnd: ondo_hwnd_isize,
+            ondo_monitor,
+            screen_rect,
+            found: false,
+        };
+
+        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let state = &mut *(lparam.0 as *mut State);
+
+            if hwnd.0 as isize == state.ondo_hwnd {
+                return BOOL(1);
+            }
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+
+            // Restrict to Ondo's monitor — windows on other displays don't
+            // count, since the user can still see Ondo there.
+            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if mon != state.ondo_monitor {
+                return BOOL(1);
+            }
+
+            // Native Win32 maximized state.
+            if IsZoomed(hwnd).as_bool() {
+                state.found = true;
+                return BOOL(0); // stop enumeration
+            }
+
+            // Borderless fullscreen — window rect covers the full monitor.
+            if let Some(scr) = state.screen_rect {
+                let mut rect: RECT = std::mem::zeroed();
+                if GetWindowRect(hwnd, &mut rect).is_ok()
+                    && rect.left <= scr.left
+                    && rect.top <= scr.top
+                    && rect.right >= scr.right
+                    && rect.bottom >= scr.bottom
+                {
+                    state.found = true;
+                    return BOOL(0);
+                }
+            }
+
+            BOOL(1)
+        }
+
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut state as *mut _ as isize));
+
+        state.found
     }
 }
 
 // ── macOS implementation ────────────────────────────────────────────────────
-// Uses CoreGraphics CGWindowListCopyWindowInfo (no accessibility permission needed)
-// to check if the frontmost window covers the full screen.
+// Uses CoreGraphics CGWindowListCopyWindowInfo (no accessibility permission needed).
+// Returns true if any on-screen layer-0 window on Ondo's display covers the
+// full screen. Foreground state is irrelevant — same intent as the Windows
+// implementation: the user's maximized app keeps mini mode on even while a
+// menu or another app has focus.
 
 #[cfg(target_os = "macos")]
-fn is_foreground_maximized(app: &AppHandle) -> bool {
+fn is_any_maximized_on_ondo_display(app: &AppHandle) -> bool {
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
@@ -308,6 +256,9 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
     let ondo_pos = app
         .get_webview_window("main")
         .and_then(|w| w.outer_position().ok());
+    let ondo_display = ondo_pos
+        .as_ref()
+        .map(|pos| display_containing_point(pos.x as f64, pos.y as f64));
 
     // Get on-screen window list (excludes desktop elements)
     let list_ptr = unsafe {
@@ -323,7 +274,9 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
     let window_list: CFArray<CFDictionary<CFString, CFType>> =
         unsafe { CFArray::wrap_under_create_rule(list_ptr as *const _) };
 
-    // Iterate on-screen windows (ordered front-to-back)
+    // Iterate every on-screen window — front-to-back order doesn't matter
+    // for this check; we just need to know whether *any* of them is maximized
+    // on Ondo's display.
     for i in 0..window_list.len() {
         let dict = unsafe { window_list.get_unchecked(i) };
 
@@ -364,6 +317,13 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
         let win_center_y = y + h / 2.0;
         let fg_display = display_containing_point(win_center_x, win_center_y);
 
+        // Restrict to Ondo's display — windows on other displays don't count.
+        if let Some(od) = ondo_display {
+            if fg_display != od {
+                continue;
+            }
+        }
+
         // Get the display size for the window's display
         let (screen_w, screen_h) = if fg_display != 0 {
             unsafe {
@@ -379,27 +339,12 @@ fn is_foreground_maximized(app: &AppHandle) -> bool {
             }
         };
 
-        // Skip small windows (menus, popups, dropdowns) — they don't represent
-        // the actual app window state. Continue checking windows behind them.
-        if w < screen_w * 0.50 || h < screen_h * 0.50 {
-            continue;
-        }
-
-        // Only trigger mini mode if the window is on the same display as Ondo
-        if let Some(pos) = &ondo_pos {
-            let ondo_display = display_containing_point(pos.x as f64, pos.y as f64);
-            if fg_display != ondo_display {
-                return false; // Different display — not relevant
-            }
-        }
-
-        // If the window covers >=95% of the screen → maximized
+        // If the window covers >=95% of the screen → maximized / fullscreen
         if w >= screen_w * 0.95 && h >= screen_h * 0.90 {
             return true;
         }
 
-        // Found a large non-maximized window — no need to check further
-        break;
+        // Not maximized; keep scanning other windows on this display.
     }
 
     false
@@ -480,6 +425,6 @@ extern "C" {
 // ── Fallback for other platforms ────────────────────────────────────────────
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn is_foreground_maximized(_app: &AppHandle) -> bool {
+fn is_any_maximized_on_ondo_display(_app: &AppHandle) -> bool {
     false
 }
