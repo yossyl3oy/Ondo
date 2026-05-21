@@ -35,7 +35,6 @@ yarn-error.log*
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/WixTools/
-src-tauri/Cargo.lock
 src-tauri/ondo-hwmon.exe
 src-tauri/PawnIO_setup.exe
 src-tauri/resources/
