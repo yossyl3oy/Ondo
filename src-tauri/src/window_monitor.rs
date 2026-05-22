@@ -244,12 +244,6 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
 
             // Native Win32 maximized state.
             if IsZoomed(hwnd).as_bool() {
-                crate::log_info!(
-                    "WindowMonitor",
-                    "mini trigger: IsZoomed class={:?} hwnd={:#x}",
-                    class,
-                    hwnd.0 as isize
-                );
                 state.found = true;
                 return BOOL(0); // stop enumeration
             }
@@ -273,20 +267,6 @@ fn is_any_maximized_on_app_display(app: &AppHandle) -> bool {
                         && (win_w - scr_w).abs() <= slop
                         && (win_h - scr_h).abs() <= slop
                     {
-                        crate::log_info!(
-                            "WindowMonitor",
-                            "mini trigger: borderless class={:?} hwnd={:#x} rect=({},{},{},{}) screen=({},{},{},{})",
-                            class,
-                            hwnd.0 as isize,
-                            rect.left,
-                            rect.top,
-                            rect.right,
-                            rect.bottom,
-                            scr.left,
-                            scr.top,
-                            scr.right,
-                            scr.bottom
-                        );
                         state.found = true;
                         return BOOL(0);
                     }

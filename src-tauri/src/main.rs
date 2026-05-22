@@ -108,9 +108,42 @@ pub struct HardwareData {
 }
 
 pub struct AppState {
-    settings: Mutex<settings::AppSettings>,
-    debug_server_running: AtomicBool,
-    debug_server_shutdown: Mutex<Option<oneshot::Sender<()>>>,
+    pub settings: Mutex<settings::AppSettings>,
+    pub debug_server_running: AtomicBool,
+    pub debug_server_shutdown: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl AppState {
+    /// Start or stop the debug HTTP listener. No-op when already in the
+    /// requested state. Used by both the Tauri command and the tray menu.
+    pub fn set_debug_server(&self, enabled: bool) -> Result<(), String> {
+        let was_running = self.debug_server_running.load(Ordering::SeqCst);
+        if enabled == was_running {
+            return Ok(());
+        }
+        if enabled {
+            self.debug_server_running.store(true, Ordering::SeqCst);
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let mut shutdown = self
+                .debug_server_shutdown
+                .lock()
+                .map_err(|e| e.to_string())?;
+            *shutdown = Some(shutdown_tx);
+            drop(shutdown);
+            tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
+        } else {
+            self.debug_server_running.store(false, Ordering::SeqCst);
+            let shutdown = self
+                .debug_server_shutdown
+                .lock()
+                .map_err(|e| e.to_string())?
+                .take();
+            if let Some(shutdown_tx) = shutdown {
+                let _ = shutdown_tx.send(());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -568,30 +601,7 @@ async fn set_default_audio_device(device_id: String, device_type: String) -> Res
 
 #[tauri::command]
 async fn toggle_debug_server(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    let was_running = state.debug_server_running.load(Ordering::SeqCst);
-    if enabled && !was_running {
-        state.debug_server_running.store(true, Ordering::SeqCst);
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let mut shutdown = state
-            .debug_server_shutdown
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *shutdown = Some(shutdown_tx);
-        drop(shutdown);
-        tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
-    }
-    if !enabled {
-        state.debug_server_running.store(false, Ordering::SeqCst);
-        let shutdown = state
-            .debug_server_shutdown
-            .lock()
-            .map_err(|e| e.to_string())?
-            .take();
-        if let Some(shutdown_tx) = shutdown {
-            let _ = shutdown_tx.send(());
-        }
-    }
-    Ok(())
+    state.set_debug_server(enabled)
 }
 
 #[derive(Clone, Copy)]
@@ -659,8 +669,7 @@ fn main() {
     let startup_position = initial_settings.position.clone();
     let startup_always_on_top = initial_settings.always_on_top;
     let startup_always_on_back = initial_settings.always_on_back;
-    // TEMP: force debug server on for mini-mode diagnostics
-    let startup_debug_server = true;
+    let startup_debug_server = initial_settings.debug_server;
     let startup_window_state = initial_settings.window_state.clone();
 
     tauri::Builder::default()
@@ -673,19 +682,14 @@ fn main() {
             debug_server_shutdown: Mutex::new(None),
         })
         .setup(move |app| {
+            // Start debug HTTP server first so tray::setup_tray can read the
+            // running state into the "Debug server" check item.
+            if startup_debug_server {
+                let _ = app.state::<AppState>().set_debug_server(true);
+            }
+
             // Setup system tray
             tray::setup_tray(app)?;
-
-            // Start debug HTTP server if enabled (http://0.0.0.0:19210)
-            if startup_debug_server {
-                let state = app.state::<AppState>();
-                state.debug_server_running.store(true, Ordering::SeqCst);
-                let (shutdown_tx, shutdown_rx) = oneshot::channel();
-                if let Ok(mut shutdown) = state.debug_server_shutdown.lock() {
-                    *shutdown = Some(shutdown_tx);
-                }
-                tauri::async_runtime::spawn(debug_server::start_debug_server(shutdown_rx));
-            }
 
             // Start window monitor for mini mode (detects maximized foreground windows)
             window_monitor::start_monitoring(app.handle().clone());

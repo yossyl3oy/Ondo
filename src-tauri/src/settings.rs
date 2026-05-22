@@ -11,25 +11,26 @@ pub struct WindowState {
     pub height: u32,
 }
 
+// `#[serde(default)]` at the struct level makes every missing field fall
+// back to `Default::default()`, so old settings.json files from earlier
+// versions keep loading cleanly when we add new fields. Field-level
+// `default = "..."` overrides are kept where the helper value diverges from
+// what `Default::default()` alone would produce (it doesn't here, but the
+// explicit form documents intent).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub position: String,
     pub opacity: u32,
     pub always_on_top: bool,
-    #[serde(default)]
     pub always_on_back: bool,
     pub auto_start: bool,
     pub update_interval: u32,
     pub theme: String,
-    #[serde(default = "default_temperature_unit")]
     pub temperature_unit: String,
     pub compact_mode: bool,
-    #[serde(default)]
     pub debug_server: bool,
-    #[serde(default = "default_section_order")]
     pub section_order: Vec<String>,
-    #[serde(default)]
     pub hidden_sections: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_state: Option<WindowState>,
@@ -55,10 +56,6 @@ impl Default for AppSettings {
     }
 }
 
-fn default_temperature_unit() -> String {
-    "celsius".to_string()
-}
-
 fn default_section_order() -> Vec<String> {
     vec![
         "cpu".to_string(),
@@ -80,11 +77,30 @@ fn get_settings_path() -> PathBuf {
 
 pub fn load_settings_from_file() -> Result<AppSettings, String> {
     let path = get_settings_path();
-    if path.exists() {
-        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).map_err(|e| e.to_string())
-    } else {
-        Ok(AppSettings::default())
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    match serde_json::from_str::<AppSettings>(&content) {
+        Ok(settings) => Ok(settings),
+        Err(parse_err) => {
+            // Rename the broken file aside so the next save() doesn't
+            // overwrite the user's last known config with defaults.
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = path.with_extension(format!("json.broken-{}", ts));
+            let rename_result = fs::rename(&path, &backup);
+            crate::log_error!(
+                "Settings",
+                "Failed to parse settings.json: {}. Backup={:?} (rename ok={}). Starting with defaults.",
+                parse_err,
+                backup,
+                rename_result.is_ok()
+            );
+            Ok(AppSettings::default())
+        }
     }
 }
 
