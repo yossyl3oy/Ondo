@@ -7,14 +7,31 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   check-update:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.ONDO_BOT_APP_ID }}
+          private-key: ${{ secrets.ONDO_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Get GitHub App user ID
+        id: app-user
+        run: |
+          echo "id=$(gh api '/users/${{ steps.app-token.outputs.app-slug }}[bot]' --jq .id)" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Get current LHM version
         id: current
@@ -55,7 +72,7 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Update LHM version
         if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
@@ -66,8 +83,8 @@ jobs:
         if: steps.check.outputs.needs_update == 'true' && steps.existing-pr.outputs.exists == 'false'
         run: |
           BRANCH="chore/update-lhm-${{ steps.latest.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-user.outputs.id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add -A
           git commit -m "chore: update LibreHardwareMonitorLib to ${{ steps.latest.outputs.version }}"
@@ -82,10 +99,10 @@ jobs:
           ## Changes
           - \`src-lhm/OndoHardwareMonitor.csproj\` - NuGet package version update
 
-          > This PR was automatically generated. Version bump will be added by CI on main push.
+          > This PR was generated automatically. After CI passes, a patch version bump commit will be added and the PR will be auto-merged.
           EOF
           )" \
             --base main \
             --head "$BRANCH"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}

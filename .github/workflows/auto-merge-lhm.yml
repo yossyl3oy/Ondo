@@ -1,0 +1,122 @@
+name: Auto-merge LHM update
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  bump-and-merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'chore/update-lhm-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.ONDO_BOT_APP_ID }}
+          private-key: ${{ secrets.ONDO_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Get GitHub App user ID
+        id: app-user
+        run: |
+          echo "id=$(gh api '/users/${{ steps.app-token.outputs.app-slug }}[bot]' --jq .id)" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Resolve PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          PR_JSON=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid --limit 1)
+          NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number // empty')
+          if [ -z "$NUMBER" ]; then
+            echo "No open PR found for $BRANCH; skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          HEAD_SHA=$(echo "$PR_JSON" | jq -r '.[0].headRefOid')
+          if [ "$WORKFLOW_SHA" != "$HEAD_SHA" ]; then
+            echo "CI ran against $WORKFLOW_SHA but PR head is now $HEAD_SHA; skipping to avoid stale-bump"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "number=$NUMBER" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v6
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Skip if bump already present
+        if: steps.pr.outputs.skip != 'true'
+        id: bumped
+        run: |
+          LAST_MSG=$(git log -1 --pretty=%s)
+          if echo "$LAST_MSG" | grep -q "^chore: bump version"; then
+            echo "already=true" >> $GITHUB_OUTPUT
+            echo "Bump commit already present; will only ensure auto-merge"
+          else
+            echo "already=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup mise
+        if: steps.pr.outputs.skip != 'true' && steps.bumped.outputs.already == 'false'
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+
+      - name: Bump patch version
+        if: steps.pr.outputs.skip != 'true' && steps.bumped.outputs.already == 'false'
+        id: bump
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          NEW=$(node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const match = pkg.version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+            if (!match) {
+              throw new Error('Expected package.json version to be major.minor.patch');
+            }
+            pkg.version = match[1] + '.' + match[2] + '.' + (Number(match[3]) + 1);
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log(pkg.version);
+          ")
+          node scripts/sync-version.cjs
+          echo "from=$CURRENT" >> $GITHUB_OUTPUT
+          echo "to=$NEW" >> $GITHUB_OUTPUT
+
+      - name: Commit and push bump
+        if: steps.pr.outputs.skip != 'true' && steps.bumped.outputs.already == 'false'
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          APP_USER_ID: ${{ steps.app-user.outputs.id }}
+        run: |
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+          git commit -m "chore: bump version ${{ steps.bump.outputs.from }} to ${{ steps.bump.outputs.to }} for LHM update"
+          git push origin HEAD:${{ github.event.workflow_run.head_branch }}
+
+      - name: Enable auto-merge
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr merge ${{ steps.pr.outputs.number }} --auto --squash

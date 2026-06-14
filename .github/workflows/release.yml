@@ -30,7 +30,7 @@ jobs:
 
       - name: Get version from package.json
         id: get-version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "version=$(jq -r .version package.json)" >> $GITHUB_OUTPUT
 
       - name: Check if release exists and is complete
         id: check-release
@@ -147,19 +147,31 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Setup mise
+        uses: jdx/mise-action@v4
         with:
-          node-version: '25.9.0'
+          install: true
+          cache: true
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: latest
+      - name: Read tool versions
+        id: tools
+        shell: bash
+        run: |
+          RUST=$(sed -n 's/^rust = "\(.*\)"/\1/p' .mise.toml)
+          DOTNET=$(sed -n 's/^dotnet = "\(.*\)"/\1/p' .mise.toml)
+          if [[ "$DOTNET" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            DOTNET_SETUP="${DOTNET}.x"
+          else
+            DOTNET_SETUP="$DOTNET"
+          fi
+          echo "rust=$RUST" >> $GITHUB_OUTPUT
+          echo "dotnet=$DOTNET" >> $GITHUB_OUTPUT
+          echo "dotnet_setup=$DOTNET_SETUP" >> $GITHUB_OUTPUT
 
-      - name: Install Rust stable
+      - name: Install Rust ${{ steps.tools.outputs.rust }}
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.tools.outputs.rust }}
           targets: ${{ matrix.rust_targets }}
 
       - name: Rust cache
@@ -167,11 +179,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Setup .NET (Windows)
+      - name: Setup .NET ${{ steps.tools.outputs.dotnet }} (Windows)
         if: matrix.platform == 'windows-latest'
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: ${{ steps.tools.outputs.dotnet_setup }}
 
       - name: Build LHM CLI (Windows)
         if: matrix.platform == 'windows-latest'

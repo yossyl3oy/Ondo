@@ -1,0 +1,5 @@
+[tools]
+node = "25.9.0"
+pnpm = "11.3.0"
+rust = "1.95.0"
+dotnet = "8.0"
