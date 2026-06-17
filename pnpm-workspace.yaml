@@ -1,3 +1,8 @@
 allowBuilds:
   '@sentry/cli': true
   esbuild: true
+
+overrides:
+  # Force esbuild >= 0.28.1 to clear GHSA-gv7w-rqvm-qjhr (High) and GHSA-g7r4-m6w7-qqqr (Low).
+  # Transitive via vite (optionalDependency); stays within vite 8's accepted ^0.28.0 range.
+  esbuild: ^0.28.1

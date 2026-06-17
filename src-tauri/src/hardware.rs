@@ -3,6 +3,8 @@ use crate::{
     NetworkInterfaceData, StorageData,
 };
 
+use serde::Serialize;
+
 #[cfg(target_os = "windows")]
 use crate::FanData;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +17,17 @@ use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LhmDaemonStatus {
+    pub supported: bool,
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub has_cached_data: bool,
+    pub exit_status: Option<String>,
+    pub error: Option<String>,
+}
 
 // LHM JSON response structures
 #[cfg(target_os = "windows")]
@@ -386,11 +399,13 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Try to get data from LHM daemon
+        // Try to get data from LHM daemon first. When it is available, avoid
+        // spawning fallback GPU CLIs like nvidia-smi on every poll.
         let lhm_data = get_lhm_data();
 
-        // Get sysinfo data for fallback/supplement (no WMI)
-        let sysinfo_data = get_fallback_from_sysinfo(timestamp);
+        // Get sysinfo data for fallback/supplement (no WMI).
+        let needs_full_fallback = lhm_data.is_none();
+        let sysinfo_data = get_fallback_from_sysinfo(needs_full_fallback, needs_full_fallback);
 
         // Collect network data
         let network = {
@@ -830,18 +845,25 @@ struct SysinfoFallback {
 }
 
 #[cfg(target_os = "windows")]
-fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
+fn get_fallback_from_sysinfo(include_gpu: bool, sample_cpu_usage: bool) -> SysinfoFallback {
     let mut sys = System::new();
     sys.refresh_cpu_all();
-    // Brief pause then refresh again for accurate CPU usage readings
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    sys.refresh_cpu_all();
+    if sample_cpu_usage {
+        // Brief pause then refresh again for accurate CPU usage readings.
+        // Skip it when LHM has the live load data and sysinfo is only a supplement.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        sys.refresh_cpu_all();
+    }
 
     let cpus = sys.cpus();
 
     let cpu = if !cpus.is_empty() {
         let name = cpus[0].brand().to_string();
-        let total_load: f32 = cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32;
+        let total_load: f32 = if sample_cpu_usage {
+            cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+        } else {
+            0.0
+        };
         let avg_freq =
             cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
 
@@ -852,7 +874,7 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
                 CpuCoreData {
                     index: i as u32,
                     temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
-                    load: c.cpu_usage(),
+                    load: if sample_cpu_usage { c.cpu_usage() } else { 0.0 },
                 }
             })
             .collect();
@@ -870,7 +892,11 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
     };
 
     // GPU: use nvidia-smi / rocm-smi (no WMI)
-    let gpu = get_gpu_info_without_wmi();
+    let gpu = if include_gpu {
+        get_gpu_info_without_wmi()
+    } else {
+        None
+    };
 
     // Storage: use sysinfo Disks
     let disks = Disks::new_with_refreshed_list();
@@ -912,73 +938,44 @@ fn get_fallback_from_sysinfo(_timestamp: u64) -> SysinfoFallback {
 /// Get GPU info without WMI - uses nvidia-smi / rocm-smi CLI tools
 #[cfg(target_os = "windows")]
 fn get_gpu_info_without_wmi() -> Option<GpuData> {
-    // Try NVIDIA first, then AMD
-    let (temperature, load, memory_used, frequency) =
-        get_nvidia_smi_stats().or_else(get_amd_gpu_stats)?;
+    if let Some(stats) = get_nvidia_smi_stats() {
+        return Some(GpuData {
+            name: stats.name,
+            temperature: stats.temperature,
+            max_temperature: 95.0,
+            load: stats.load,
+            frequency: stats.frequency,
+            memory_used: stats.memory_used,
+            memory_total: stats.memory_total,
+        });
+    }
 
-    // Get GPU name from nvidia-smi if available
-    let name = get_nvidia_gpu_name().unwrap_or_else(|| "Unknown GPU".to_string());
+    let (temperature, load, memory_used, frequency) = get_amd_gpu_stats()?;
 
     Some(GpuData {
-        name,
+        name: "Unknown AMD GPU".to_string(),
         temperature,
         max_temperature: 95.0,
         load,
         frequency,
         memory_used,
-        memory_total: get_nvidia_memory_total().unwrap_or(8.0),
+        memory_total: 0.0,
     })
 }
 
-/// Get NVIDIA GPU name via nvidia-smi
-#[cfg(target_os = "windows")]
-fn get_nvidia_gpu_name() -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let output = Command::new("nvidia-smi")
-        .args(["--query-gpu=name", "--format=csv,noheader,nounits"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !name.is_empty() {
-            return Some(name);
-        }
-    }
-    None
-}
-
-/// Get NVIDIA GPU total memory via nvidia-smi
-#[cfg(target_os = "windows")]
-fn get_nvidia_memory_total() -> Option<f32> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let output = Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mb = stdout.trim().parse::<f32>().ok()?;
-        return Some(mb / 1024.0); // MB to GB
-    }
-    None
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq)]
+struct NvidiaGpuStats {
+    temperature: f32,
+    load: f32,
+    memory_used: f32,
+    frequency: f32,
+    name: String,
+    memory_total: f32,
 }
 
 #[cfg(target_os = "windows")]
-fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
+fn get_nvidia_smi_stats() -> Option<NvidiaGpuStats> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -986,7 +983,7 @@ fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
 
     let output = Command::new("nvidia-smi")
         .args([
-            "--query-gpu=temperature.gpu,utilization.gpu,memory.used,clocks.gr",
+            "--query-gpu=temperature.gpu,utilization.gpu,memory.used,clocks.gr,name,memory.total",
             "--format=csv,noheader,nounits",
         ])
         .creation_flags(CREATE_NO_WINDOW)
@@ -1001,17 +998,24 @@ fn get_nvidia_smi_stats() -> Option<(f32, f32, f32, f32)> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout.lines().next()?;
-    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+    parse_nvidia_smi_stats(line)
+}
 
-    if parts.len() >= 4 {
-        let temp = parts[0].parse::<f32>().ok()?;
-        let load = parts[1].parse::<f32>().ok()?;
-        let mem_used_mb = parts[2].parse::<f32>().ok()?;
-        let freq_mhz = parts[3].parse::<f32>().ok()?;
-        Some((temp, load, mem_used_mb / 1024.0, freq_mhz / 1000.0))
-    } else {
-        None
+#[cfg(any(target_os = "windows", test))]
+fn parse_nvidia_smi_stats(line: &str) -> Option<NvidiaGpuStats> {
+    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+    if parts.len() < 6 {
+        return None;
     }
+
+    Some(NvidiaGpuStats {
+        temperature: parts[0].parse::<f32>().ok()?,
+        load: parts[1].parse::<f32>().ok()?,
+        memory_used: parts[2].parse::<f32>().ok()? / 1024.0,
+        frequency: parts[3].parse::<f32>().ok()? / 1000.0,
+        name: parts[4].to_string(),
+        memory_total: parts[5].parse::<f32>().ok()? / 1024.0,
+    })
 }
 
 // AMD GPU stats using rocm-smi or fallback methods
@@ -1498,4 +1502,105 @@ fn get_macos_model_name() -> String {
 #[cfg(not(target_os = "windows"))]
 pub fn shutdown_lhm_daemon() {
     // No-op on non-Windows
+}
+
+#[cfg(target_os = "windows")]
+pub fn lhm_daemon_status() -> LhmDaemonStatus {
+    let mut daemon_guard = match LHM_DAEMON.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            return LhmDaemonStatus {
+                supported: true,
+                running: false,
+                pid: None,
+                has_cached_data: false,
+                exit_status: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let Some(daemon) = daemon_guard.as_mut() else {
+        return LhmDaemonStatus {
+            supported: true,
+            running: false,
+            pid: None,
+            has_cached_data: false,
+            exit_status: None,
+            error: None,
+        };
+    };
+
+    let pid = daemon.process.id();
+    let has_cached_data = daemon.latest_data.is_some();
+
+    match daemon.process.try_wait() {
+        Ok(Some(status)) => {
+            *daemon_guard = None;
+            LhmDaemonStatus {
+                supported: true,
+                running: false,
+                pid: Some(pid),
+                has_cached_data,
+                exit_status: Some(status.to_string()),
+                error: None,
+            }
+        }
+        Ok(None) => LhmDaemonStatus {
+            supported: true,
+            running: true,
+            pid: Some(pid),
+            has_cached_data,
+            exit_status: None,
+            error: None,
+        },
+        Err(e) => LhmDaemonStatus {
+            supported: true,
+            running: false,
+            pid: Some(pid),
+            has_cached_data,
+            exit_status: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn lhm_daemon_status() -> LhmDaemonStatus {
+    LhmDaemonStatus {
+        supported: false,
+        running: false,
+        pid: None,
+        has_cached_data: false,
+        exit_status: None,
+        error: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_nvidia_smi_stats, NvidiaGpuStats};
+
+    #[test]
+    fn parses_combined_nvidia_smi_output() {
+        let stats = parse_nvidia_smi_stats("62, 48, 6144, 1980, NVIDIA GeForce RTX 4080, 16376")
+            .expect("valid nvidia-smi row");
+
+        assert_eq!(
+            stats,
+            NvidiaGpuStats {
+                temperature: 62.0,
+                load: 48.0,
+                memory_used: 6.0,
+                frequency: 1.98,
+                name: "NVIDIA GeForce RTX 4080".to_string(),
+                memory_total: 15.9921875,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_nvidia_smi_output() {
+        assert!(parse_nvidia_smi_stats("62, 48, 6144").is_none());
+    }
 }

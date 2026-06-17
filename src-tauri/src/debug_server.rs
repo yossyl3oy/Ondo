@@ -1,3 +1,4 @@
+use crate::app_metrics;
 use crate::hardware;
 use crate::log_buffer;
 use crate::window_debug;
@@ -132,7 +133,7 @@ fn handle_help(query: &HashMap<String, String>) -> String {
   "endpoints": [
     {"method": "GET", "path": "/", "description": "Dashboard (HTML)"},
     {"method": "GET", "path": "/help", "description": "This help. Add ?format=json for JSON"},
-    {"method": "GET", "path": "/status", "description": "Process state (PID, version, log count)"},
+    {"method": "GET", "path": "/status", "description": "Process state, version, log count, runtime metrics"},
     {"method": "GET", "path": "/api/hardware", "description": "Hardware sensor data (JSON)"},
     {"method": "GET", "path": "/api/sensors", "description": "Raw sensor list (text)"},
     {"method": "GET", "path": "/api/pawnio", "description": "PawnIO driver status (JSON)"},
@@ -155,7 +156,7 @@ Ondo Debug Server - API Reference
 
   GET  /                Dashboard (HTML)
   GET  /help            This help. Add ?format=json for JSON
-  GET  /status          Process state (PID, version, log count)
+  GET  /status          Process state, version, log count, runtime metrics
   GET  /api/hardware    Hardware sensor data (JSON)
   GET  /api/sensors     Raw sensor list (text)
   GET  /api/pawnio      PawnIO driver status (JSON)
@@ -179,23 +180,56 @@ fn handle_status(query: &HashMap<String, String>) -> String {
     let pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
     let pawnio = crate::get_pawnio_detailed_status();
+    let lhm = hardware::lhm_daemon_status();
+    let extra_pids: Vec<u32> = lhm.pid.iter().copied().collect();
+    let metrics = app_metrics::snapshot(&extra_pids);
 
     if wants_json(query) {
-        let pawnio_json = serde_json::to_string(&pawnio).unwrap_or_else(|_| "{}".to_string());
-        let json = format!(
-            r#"{{"status":"running","pid":{},"version":"{}","logCount":{},"pawnio":{}}}"#,
-            pid, version, log_count, pawnio_json
-        );
-        http_response(200, "application/json", &json)
+        let mut body = serde_json::json!({
+            "status": "running",
+            "pid": pid,
+            "version": version,
+            "logCount": log_count,
+            "pawnio": pawnio,
+            "lhm": lhm,
+        });
+        match metrics {
+            Ok(metrics) => body["metrics"] = serde_json::json!(metrics),
+            Err(e) => body["metricsError"] = serde_json::json!(e),
+        }
+        http_response(200, "application/json", &body.to_string())
     } else {
         let pawnio_state = pawnio.service_state.as_deref().unwrap_or("unknown");
         let pawnio_driver = pawnio
             .driver_file_exists
             .map(|v| if v { "found" } else { "not found" })
             .unwrap_or("N/A");
+        let lhm_pid = lhm
+            .pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        let metrics_text = match metrics {
+            Ok(metrics) => format!(
+                "App processes: {}\nApp memory: {:.1} MiB\nApp CPU: {:.1}%\nSystem processes: {}",
+                metrics.app_process_count,
+                metrics.app_memory_mb,
+                metrics.app_cpu_percent,
+                metrics.total_system_process_count
+            ),
+            Err(e) => format!("Metrics error: {}", e),
+        };
         let text = format!(
-            "Status: running\nPID: {}\nVersion: {}\nLog lines: {}\nPawnIO: service={}, driver_file={}",
-            pid, version, log_count, pawnio_state, pawnio_driver
+            "Status: running\nPID: {}\nVersion: {}\nLog lines: {}\n{}\nLHM: supported={}, running={}, pid={}, cached_data={}\nPawnIO: service={}, driver_file={}",
+            pid,
+            version,
+            log_count,
+            metrics_text,
+            lhm.supported,
+            lhm.running,
+            lhm_pid,
+            lhm.has_cached_data,
+            pawnio_state,
+            pawnio_driver
         );
         http_response(200, "text/plain", &text)
     }
