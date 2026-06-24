@@ -13,7 +13,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup mise
         uses: jdx/mise-action@v4
@@ -36,7 +36,7 @@ jobs:
   cargo-check:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Read tool versions
         id: tools
@@ -60,7 +60,7 @@ jobs:
         working-directory: src-tauri
 
       - name: Cache cargo-audit binary
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}
@@ -76,7 +76,7 @@ jobs:
   lhm-build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Read tool versions
         id: tools
