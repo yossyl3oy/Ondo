@@ -3,6 +3,25 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HardwareData } from "../types";
 import { captureHardwareError } from "../sentry";
 
+const EMA_ALPHA = 0.3;
+
+type NetworkInterface = NonNullable<HardwareData["network"]>[number];
+
+// ネットワーク速度をEMAで平滑化（emaマップをin-placeで更新）
+function applyNetworkEma(
+  interfaces: NetworkInterface[],
+  ema: Map<string, { dl: number; ul: number }>,
+): void {
+  for (const iface of interfaces) {
+    const prev = ema.get(iface.name);
+    if (prev) {
+      iface.receivedPerSec = EMA_ALPHA * iface.receivedPerSec + (1 - EMA_ALPHA) * prev.dl;
+      iface.sentPerSec = EMA_ALPHA * iface.sentPerSec + (1 - EMA_ALPHA) * prev.ul;
+    }
+    ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
+  }
+}
+
 interface UseHardwareDataResult {
   hardwareData: HardwareData;
   isLoading: boolean;
@@ -75,15 +94,7 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
         }
 
         // EMAで平滑化
-        const alpha = 0.3;
-        for (const iface of data.network) {
-          const prev = ema.get(iface.name);
-          if (prev) {
-            iface.receivedPerSec = alpha * iface.receivedPerSec + (1 - alpha) * prev.dl;
-            iface.sentPerSec = alpha * iface.sentPerSec + (1 - alpha) * prev.ul;
-          }
-          ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
-        }
+        applyNetworkEma(data.network, ema);
 
         // 非アクティブなインターフェースのEMA状態をクリーンアップ
         const activeNames = new Set(data.network.map((i) => i.name));
@@ -131,16 +142,7 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
       if (import.meta.env.DEV) {
         const mockData = generateMockData();
         if (mockData.network) {
-          const alpha = 0.3;
-          const ema = networkEmaRef.current;
-          for (const iface of mockData.network) {
-            const prev = ema.get(iface.name);
-            if (prev) {
-              iface.receivedPerSec = alpha * iface.receivedPerSec + (1 - alpha) * prev.dl;
-              iface.sentPerSec = alpha * iface.sentPerSec + (1 - alpha) * prev.ul;
-            }
-            ema.set(iface.name, { dl: iface.receivedPerSec, ul: iface.sentPerSec });
-          }
+          applyNetworkEma(mockData.network, networkEmaRef.current);
         }
         setHardwareData(mockData);
       }

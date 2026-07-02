@@ -13,6 +13,14 @@ import "./HudWidget.css";
 
 const DRAG_THRESHOLD = 5;
 
+// Module-level formatter: creating an Intl.DateTimeFormat on every render
+// (which toLocaleTimeString with options does) is comparatively expensive.
+const TIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
 interface DragInfo {
   sectionType: SectionType;
   startY: number;
@@ -1067,13 +1075,7 @@ export function HudWidget({
       <div className="hud-footer">
         <div className="status-indicator online" />
         <span className="status-text">MONITORING</span>
-        <span className="timestamp">
-          {new Date().toLocaleTimeString("ja-JP", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}
-        </span>
+        <span className="timestamp">{TIME_FORMATTER.format(new Date())}</span>
       </div>
     </div>
   );
