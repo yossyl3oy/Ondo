@@ -110,6 +110,21 @@ struct LhmDaemon {
 #[cfg(target_os = "windows")]
 static LHM_DAEMON: Mutex<Option<LhmDaemon>> = Mutex::new(None);
 
+/// Check whether the LHM daemon's stdout pipe has unread data.
+/// Uses PeekNamedPipe because PIPE_NOWAIT may not work reliably on
+/// anonymous pipes.
+#[cfg(target_os = "windows")]
+fn pipe_has_data(reader: &BufReader<ChildStdout>) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Pipes::PeekNamedPipe;
+
+    let handle = HANDLE(reader.get_ref().as_raw_handle());
+    let mut bytes_available: u32 = 0;
+    let ok = unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None) };
+    ok.is_ok() && bytes_available > 0
+}
+
 #[cfg(target_os = "windows")]
 struct NetworkMonitor {
     networks: Networks,
@@ -400,12 +415,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .unwrap_or(0);
 
         // Try to get data from LHM daemon first. When it is available, avoid
-        // spawning fallback GPU CLIs like nvidia-smi on every poll.
+        // spawning fallback GPU CLIs like nvidia-smi on every poll. sysinfo
+        // fallbacks are computed lazily below, only for the fields LHM lacks.
         let lhm_data = get_lhm_data();
-
-        // Get sysinfo data for fallback/supplement (no WMI).
-        let needs_full_fallback = lhm_data.is_none();
-        let sysinfo_data = get_fallback_from_sysinfo(needs_full_fallback, needs_full_fallback);
 
         // Collect network data
         let network = {
@@ -441,9 +453,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 let frequency = if c.frequency > 0.0 {
                     c.frequency
                 } else {
-                    sysinfo_data
-                        .cpu
-                        .as_ref()
+                    sysinfo_cpu_data(false)
                         .map(|cpu| cpu.frequency)
                         .unwrap_or(0.0)
                 };
@@ -488,9 +498,15 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 memory_total: g.memory_total,
             });
 
-            // For storage: use LHM data, supplement with sysinfo if LHM data is incomplete
+            // For storage: use LHM data, supplement with sysinfo if LHM data is incomplete.
+            // Only enumerate disks when some LHM entry is actually missing data.
             let storage = lhm.storage.map(|storages| {
-                let sysinfo_storage = sysinfo_data.storage.as_ref();
+                let sysinfo_storage = storages
+                    .iter()
+                    .any(|s| s.total_space <= 0.0 || s.used_percent <= 0.0)
+                    .then(sysinfo_storage_data)
+                    .flatten();
+                let sysinfo_storage = sysinfo_storage.as_ref();
                 storages
                     .into_iter()
                     .map(|s| {
@@ -565,9 +581,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             // Full fallback to sysinfo (LHM not available)
             crate::log_warn!("Hardware", "LHM unavailable, using sysinfo fallback");
             Ok(HardwareData {
-                cpu: sysinfo_data.cpu,
-                gpu: sysinfo_data.gpu,
-                storage: sysinfo_data.storage,
+                cpu: sysinfo_cpu_data(true),
+                gpu: get_gpu_info_without_wmi(),
+                storage: sysinfo_storage_data(),
                 motherboard: None,
                 network,
                 display: get_display_info(),
@@ -624,24 +640,10 @@ fn get_lhm_data() -> Option<LhmResponse> {
     }
 
     // Read all available lines and keep the latest one
-    // Use PeekNamedPipe to check for available data before reading,
-    // because PIPE_NOWAIT may not work reliably on anonymous pipes.
     let mut latest_line = None;
     loop {
         // Check if there's data available before attempting to read
-        let has_data = {
-            use std::os::windows::io::AsRawHandle;
-            use windows::Win32::Foundation::HANDLE;
-            use windows::Win32::System::Pipes::PeekNamedPipe;
-
-            let handle = HANDLE(daemon.reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
-            let mut bytes_available: u32 = 0;
-            let ok =
-                unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None) };
-            ok.is_ok() && bytes_available > 0
-        };
-
-        if !has_data {
+        if !pipe_has_data(&daemon.reader) {
             break;
         }
 
@@ -719,19 +721,9 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
     while std::time::Instant::now() < deadline {
         let mut line = String::new();
         // Use a short sleep + peek approach to avoid blocking forever
-        {
-            use std::os::windows::io::AsRawHandle;
-            use windows::Win32::Foundation::HANDLE;
-            use windows::Win32::System::Pipes::PeekNamedPipe;
-
-            let handle = HANDLE(reader.get_ref().as_raw_handle() as *mut std::ffi::c_void);
-            let mut bytes_available: u32 = 0;
-            let ok =
-                unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut bytes_available), None) };
-            if !ok.is_ok() || bytes_available == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                continue;
-            }
+        if !pipe_has_data(&reader) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            continue;
         }
 
         match reader.read_line(&mut line) {
@@ -789,6 +781,11 @@ use sysinfo::{Disks, Networks, System};
 /// Collect network interface data from sysinfo Networks.
 /// `networks` must have been refreshed before calling this.
 /// `interval_secs` is the time since last refresh (for rate calculation).
+const VIRTUAL_IFACE_PREFIXES: &[&str] = &[
+    "veth", "docker", "br-", "vmnet", "virbr", "vbox", "utun", "awdl", "llw", "bridge", "ap",
+    "gif", "stf", "anpi",
+];
+
 fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkInterfaceData> {
     let mut result = Vec::new();
     for (name, data) in networks.list() {
@@ -796,20 +793,7 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
         let lower = name.to_lowercase();
         if lower == "lo"
             || lower == "lo0"
-            || lower.starts_with("veth")
-            || lower.starts_with("docker")
-            || lower.starts_with("br-")
-            || lower.starts_with("vmnet")
-            || lower.starts_with("virbr")
-            || lower.starts_with("vbox")
-            || lower.starts_with("utun")
-            || lower.starts_with("awdl")
-            || lower.starts_with("llw")
-            || lower.starts_with("bridge")
-            || lower.starts_with("ap")
-            || lower.starts_with("gif")
-            || lower.starts_with("stf")
-            || lower.starts_with("anpi")
+            || VIRTUAL_IFACE_PREFIXES.iter().any(|p| lower.starts_with(p))
         {
             continue;
         }
@@ -836,69 +820,59 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
     result
 }
 
-/// Fallback data source using sysinfo crate (no WMI dependency)
+/// Fallback CPU data from sysinfo (no WMI dependency).
+/// When `sample_cpu_usage` is false, only name/frequency are meaningful and
+/// the 200ms usage-sampling pause is skipped — used when LHM already has the
+/// live load data and sysinfo is only a supplement.
 #[cfg(target_os = "windows")]
-struct SysinfoFallback {
-    cpu: Option<CpuData>,
-    gpu: Option<GpuData>,
-    storage: Option<Vec<StorageData>>,
-}
-
-#[cfg(target_os = "windows")]
-fn get_fallback_from_sysinfo(include_gpu: bool, sample_cpu_usage: bool) -> SysinfoFallback {
+fn sysinfo_cpu_data(sample_cpu_usage: bool) -> Option<CpuData> {
     let mut sys = System::new();
     sys.refresh_cpu_all();
     if sample_cpu_usage {
         // Brief pause then refresh again for accurate CPU usage readings.
-        // Skip it when LHM has the live load data and sysinfo is only a supplement.
         std::thread::sleep(std::time::Duration::from_millis(200));
         sys.refresh_cpu_all();
     }
 
     let cpus = sys.cpus();
+    if cpus.is_empty() {
+        return None;
+    }
 
-    let cpu = if !cpus.is_empty() {
-        let name = cpus[0].brand().to_string();
-        let total_load: f32 = if sample_cpu_usage {
-            cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
-        } else {
-            0.0
-        };
-        let avg_freq =
-            cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
+    let name = cpus[0].brand().to_string();
+    let total_load: f32 = if sample_cpu_usage {
+        cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+    } else {
+        0.0
+    };
+    let avg_freq =
+        cpus.iter().map(|c| c.frequency()).sum::<u64>() as f32 / cpus.len() as f32 / 1000.0;
 
-        let cores: Vec<CpuCoreData> = cpus
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                CpuCoreData {
-                    index: i as u32,
-                    temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
-                    load: if sample_cpu_usage { c.cpu_usage() } else { 0.0 },
-                }
-            })
-            .collect();
-
-        Some(CpuData {
-            name,
-            temperature: 0.0, // Not available via sysinfo on Windows
-            max_temperature: 100.0,
-            load: total_load,
-            frequency: avg_freq,
-            cores,
+    let cores: Vec<CpuCoreData> = cpus
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            CpuCoreData {
+                index: i as u32,
+                temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
+                load: if sample_cpu_usage { c.cpu_usage() } else { 0.0 },
+            }
         })
-    } else {
-        None
-    };
+        .collect();
 
-    // GPU: use nvidia-smi / rocm-smi (no WMI)
-    let gpu = if include_gpu {
-        get_gpu_info_without_wmi()
-    } else {
-        None
-    };
+    Some(CpuData {
+        name,
+        temperature: 0.0, // Not available via sysinfo on Windows
+        max_temperature: 100.0,
+        load: total_load,
+        frequency: avg_freq,
+        cores,
+    })
+}
 
-    // Storage: use sysinfo Disks
+/// Fallback storage data from sysinfo Disks (no WMI dependency).
+#[cfg(target_os = "windows")]
+fn sysinfo_storage_data() -> Option<Vec<StorageData>> {
     let disks = Disks::new_with_refreshed_list();
     let storage_data: Vec<StorageData> = disks
         .iter()
@@ -926,13 +900,11 @@ fn get_fallback_from_sysinfo(include_gpu: bool, sample_cpu_usage: bool) -> Sysin
         })
         .collect();
 
-    let storage = if storage_data.is_empty() {
+    if storage_data.is_empty() {
         None
     } else {
         Some(storage_data)
-    };
-
-    SysinfoFallback { cpu, gpu, storage }
+    }
 }
 
 /// Get GPU info without WMI - uses nvidia-smi / rocm-smi CLI tools
