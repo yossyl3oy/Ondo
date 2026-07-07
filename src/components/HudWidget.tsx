@@ -969,7 +969,20 @@ export function HudWidget({
             </div>
           );
           break;
-        // audio is omitted in mini mode
+        case "audio": {
+          const defaultPlayback = audioDevices.find(
+            (d) => d.device_type === "playback" && d.is_default,
+          );
+          const name = defaultPlayback?.name ?? "No device";
+          rows.push(
+            <div key="audio" className="mini-row audio">
+              <div className="section-indicator audio" />
+              <span className="mini-label">OUT</span>
+              <span className="mini-name" title={name}>{name}</span>
+            </div>
+          );
+          break;
+        }
       }
     }
 

@@ -976,3 +976,15 @@
   text-align: right;
   flex-shrink: 0;
 }
+
+/* Device name (e.g. audio output) — truncates with … when too long */
+.mini-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
