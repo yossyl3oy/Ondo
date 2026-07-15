@@ -110,44 +110,84 @@ pub async fn save_settings_to_file(settings: &AppSettings) -> Result<(), String>
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+// Auto-start uses a Task Scheduler logon task, NOT the HKCU Run registry key.
+// Ondo's manifest is `requireAdministrator`, and Windows silently skips Run-key
+// entries that would need UAC elevation at logon. A scheduled task with
+// `/RL HIGHEST` is the supported way to auto-start an elevated app.
+const AUTOSTART_TASK_NAME: &str = "Ondo";
+
+// Argument builders are plain functions (not cfg-gated) so they stay unit-testable
+// on non-Windows dev hosts.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn schtasks_create_args(exe_path: &str) -> Vec<String> {
+    [
+        "/Create",
+        "/F",
+        "/TN",
+        AUTOSTART_TASK_NAME,
+        "/SC",
+        "ONLOGON",
+        "/RL",
+        "HIGHEST",
+        "/TR",
+        &format!("\"{}\"", exe_path),
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn schtasks_delete_args() -> Vec<String> {
+    ["/Delete", "/F", "/TN", AUTOSTART_TASK_NAME]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 #[cfg(target_os = "windows")]
 pub async fn set_auto_start(enabled: bool) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_path_str = exe_path.to_string_lossy();
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // Clean up the legacy Run-key entry from older builds in both branches;
+    // it never worked (elevated apps are skipped at logon) and would be stale.
+    let _ = Command::new("reg")
+        .args([
+            "delete",
+            "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "/v",
+            "Ondo",
+            "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
 
     if enabled {
-        // Add to registry for auto-start
-        let output = Command::new("reg")
-            .args([
-                "add",
-                "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "Ondo",
-                "/t",
-                "REG_SZ",
-                "/d",
-                &format!("\"{}\"", exe_path_str),
-                "/f",
-            ])
+        let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+        let output = Command::new("schtasks")
+            .args(schtasks_create_args(&exe_path.to_string_lossy()))
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| e.to_string())?;
 
         if !output.status.success() {
-            return Err("Failed to add registry key".to_string());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "Failed to create auto-start scheduled task: {}",
+                stderr.trim()
+            ));
         }
+        crate::log_info!("Settings", "Auto-start scheduled task created");
     } else {
-        // Remove from registry
-        let _ = Command::new("reg")
-            .args([
-                "delete",
-                "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "Ondo",
-                "/f",
-            ])
+        // Ignore failure: the task may simply not exist yet.
+        let _ = Command::new("schtasks")
+            .args(schtasks_delete_args())
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
+        crate::log_info!("Settings", "Auto-start scheduled task removed");
     }
 
     Ok(())
@@ -157,4 +197,44 @@ pub async fn set_auto_start(enabled: bool) -> Result<(), String> {
 pub async fn set_auto_start(_enabled: bool) -> Result<(), String> {
     // Auto-start is Windows-specific
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_args_register_elevated_logon_task() {
+        let args = schtasks_create_args(r"C:\Program Files\Ondo\ondo.exe");
+        assert_eq!(
+            args,
+            vec![
+                "/Create",
+                "/F",
+                "/TN",
+                "Ondo",
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "HIGHEST",
+                "/TR",
+                "\"C:\\Program Files\\Ondo\\ondo.exe\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn create_args_quote_exe_path_for_spaces() {
+        let args = schtasks_create_args(r"C:\Program Files\Ondo\ondo.exe");
+        let tr = args.last().unwrap();
+        assert!(tr.starts_with('"') && tr.ends_with('"'));
+    }
+
+    #[test]
+    fn delete_args_target_same_task_name() {
+        assert_eq!(
+            schtasks_delete_args(),
+            vec!["/Delete", "/F", "/TN", AUTOSTART_TASK_NAME]
+        );
+    }
 }
