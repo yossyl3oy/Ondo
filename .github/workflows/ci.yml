@@ -66,7 +66,7 @@ jobs:
           key: cargo-audit-${{ runner.os }}
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
         working-directory: src-tauri
 
       - name: Cargo audit
