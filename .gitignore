@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+# pnpm-lock.yaml が正 (pnpm管理) — npmで誤ってinstallした際の混入防止
+package-lock.json
 
 # Build output
 dist/
