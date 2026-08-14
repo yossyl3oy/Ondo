@@ -15,22 +15,19 @@ pub fn init_sentry() {
         return;
     }
 
-    let guard = sentry::init((
-        dsn,
-        sentry::ClientOptions {
-            release: Some(format!("ondo@{}", APP_VERSION).into()),
-            environment: Some(
-                if cfg!(debug_assertions) {
-                    "development"
-                } else {
-                    "production"
-                }
-                .into(),
-            ),
-            sample_rate: 1.0,
-            ..Default::default()
-        },
-    ));
+    // ClientOptions is #[non_exhaustive] as of sentry 0.48.5, so build it by
+    // mutation instead of a struct literal. sample_rate defaults to 1.0.
+    let mut options = sentry::ClientOptions::default();
+    options.release = Some(format!("ondo@{}", APP_VERSION).into());
+    options.environment = Some(
+        if cfg!(debug_assertions) {
+            "development"
+        } else {
+            "production"
+        }
+        .into(),
+    );
+    let guard = sentry::init((dsn, options));
 
     if SENTRY_GUARD.set(guard).is_err() {
         crate::log_warn!("Sentry", "Already initialized");
