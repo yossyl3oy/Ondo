@@ -24,6 +24,7 @@ function App() {
   const [miniMode, setMiniMode] = useState(false);
   const [cursorNear, setCursorNear] = useState(false);
   const savedWindowStateRef = useRef<WindowState | null>(null);
+  const miniModeRef = useRef(false);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
   const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
@@ -89,6 +90,7 @@ function App() {
   useEffect(() => {
     const unlisten = listen<{ active: boolean }>("minimode-changed", async (event) => {
       const active = event.payload.active;
+      miniModeRef.current = active;
       setMiniMode(active);
       if (!active) setCursorNear(false);
 
@@ -97,6 +99,9 @@ function App() {
           // Save current window state before shrinking
           const currentState = await invoke<WindowState>("get_window_state");
           savedWindowStateRef.current = currentState;
+          // Persist the pre-mini size: if the process is killed while in
+          // mini mode, the next launch must restore the standard-mode size
+          await updateSettings({ windowState: currentState });
 
           // Remove min size constraint so window can shrink below 350px
           await invoke("set_window_min_size", { width: null, height: null });
@@ -149,7 +154,7 @@ function App() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [settings.position]);
+  }, [settings.position, updateSettings]);
 
   // Apply theme to document root
   useEffect(() => {
@@ -165,6 +170,9 @@ function App() {
   const saveWindowStateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saveWindowState = useCallback(async () => {
+    // In mini mode the window holds the mini size — persisting it would
+    // make the next launch restore a tiny window in standard mode
+    if (miniModeRef.current) return;
     try {
       const state = await invoke<WindowState>("get_window_state");
       if (state) {
