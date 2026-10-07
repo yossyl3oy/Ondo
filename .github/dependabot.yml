@@ -7,6 +7,12 @@ updates:
     groups:
       rust-dependencies:
         patterns: ["*"]
+    ignore:
+      # windows-core must match the version re-exported by `windows` (the
+      # #[interface] macro expands to ::windows_core paths). windows-core has
+      # moved to 0.100 while windows is still 0.62, so bump both by hand.
+      - dependency-name: windows-core
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: npm
     directory: /
@@ -24,6 +30,9 @@ updates:
       dotnet-dependencies:
         patterns: ["*"]
         exclude-patterns: ["LibreHardwareMonitorLib"]
+    ignore:
+      # Updated by .github/workflows/update-lhm.yml instead
+      - dependency-name: LibreHardwareMonitorLib
 
   - package-ecosystem: github-actions
     directory: /
