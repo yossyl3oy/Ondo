@@ -6,6 +6,8 @@ namespace OndoHardwareMonitor;
 
 class Program
 {
+    const float BytesPerGiB = 1024f * 1024f * 1024f;
+
     static Computer? _computer;
     static UpdateVisitor? _visitor;
 
@@ -357,11 +359,12 @@ class Program
                     if (sensor.Name == "GPU Core" || sensor.Name.Contains("GPU Core"))
                         gpu.Frequency = value / 1000f; // MHz to GHz
                     break;
-                case SensorType.SmallData:
+                case SensorType.Data:
+                    // LHM reports Data sensors in bytes (SmallData/MB was removed in 0.9.7-pre749)
                     if (sensor.Name == "GPU Memory Used" || sensor.Name == "D3D Dedicated Memory Used")
-                        gpu.MemoryUsed = value / 1024f; // MB to GB
+                        gpu.MemoryUsed = value / BytesPerGiB;
                     else if (sensor.Name == "GPU Memory Total")
-                        gpu.MemoryTotal = value / 1024f; // MB to GB
+                        gpu.MemoryTotal = value / BytesPerGiB;
                     break;
             }
         }
