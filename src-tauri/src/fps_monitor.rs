@@ -5,13 +5,12 @@
 /// without elevation the monitor silently returns `None`.
 
 #[cfg(target_os = "windows")]
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+use std::collections::VecDeque;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "windows")]
 use std::sync::Mutex;
-#[cfg(target_os = "windows")]
-use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
 use windows::core::{GUID, PCWSTR, PWSTR};
@@ -42,8 +41,83 @@ const SESSION_NAME: &str = "OndoFpsMonitor";
 #[cfg(target_os = "windows")]
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Present timestamps per PID, in raw QPC ticks taken from the ETW event
+/// header (the session uses the QPC clock). Using the event's own timestamp
+/// instead of the callback's arrival time matters: real-time ETW delivers
+/// events in buffered batches, so arrival times bunch up and a "count the
+/// last second" approach swings between 0 and double the real rate.
 #[cfg(target_os = "windows")]
-static FRAME_TIMES: Mutex<Option<HashMap<u32, VecDeque<Instant>>>> = Mutex::new(None);
+static FRAME_TIMES: Mutex<Option<HashMap<u32, VecDeque<i64>>>> = Mutex::new(None);
+
+// ---------------------------------------------------------------------------
+// Present event matching + FPS math (platform independent, unit tested)
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentProvider {
+    Dxgi,
+    D3d9,
+}
+
+/// Event IDs per PresentMon's PresentData/ETW manifests:
+/// DXGI Present_Start = 0x2a, PresentMultiplaneOverlay_Start = 0x37,
+/// D3D9 Present_Start = 0x01. Both providers emit plenty of other
+/// Start-opcode events, so matching on the opcode alone overcounts.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_present_start(provider: PresentProvider, event_id: u16) -> bool {
+    match provider {
+        PresentProvider::Dxgi => matches!(event_id, 0x2a | 0x37),
+        PresentProvider::D3d9 => event_id == 0x01,
+    }
+}
+
+/// Averaging window: frames within this span before the newest one count.
+const WINDOW_SECS: i64 = 1;
+/// History kept per PID (must be >= WINDOW_SECS).
+const KEEP_SECS: i64 = 2;
+/// No presents for this long (relative to now) means the app is idle or
+/// gone. Has to exceed the usual ETW delivery lag (FlushTimer = 1s).
+const STALE_SECS: i64 = 2;
+
+/// Records one present and drops history older than KEEP_SECS relative to
+/// the newest timestamp. Events can arrive slightly out of order across
+/// buffers, so trimming is anchored on the max seen, not on `ts`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn record_present(times: &mut VecDeque<i64>, ts: i64, freq: i64) {
+    times.push_back(ts);
+    let newest = times.iter().copied().max().unwrap_or(ts);
+    let cutoff = newest - KEEP_SECS * freq;
+    while times.front().is_some_and(|&t| t < cutoff) {
+        times.pop_front();
+    }
+}
+
+/// Average FPS over the last WINDOW_SECS of presents, from the frame
+/// intervals themselves: (frames - 1) / (newest - oldest). `now` is only
+/// used to detect that presenting has stopped.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn fps_from_timestamps(times: &VecDeque<i64>, now: i64, freq: i64) -> Option<u32> {
+    if freq <= 0 {
+        return None;
+    }
+    let newest = times.iter().copied().max()?;
+    if now - newest > STALE_SECS * freq {
+        return None;
+    }
+    let window_start = newest - WINDOW_SECS * freq;
+    let (count, oldest) = times
+        .iter()
+        .copied()
+        .filter(|&t| t >= window_start)
+        .fold((0u64, newest), |(n, lo), t| (n + 1, lo.min(t)));
+    let span = newest - oldest;
+    if count < 2 || span <= 0 {
+        return None;
+    }
+    let fps = (count - 1) as f64 * freq as f64 / span as f64;
+    Some(fps.round() as u32)
+}
 
 // ---------------------------------------------------------------------------
 // ETW consumer APIs — not available in the `windows` crate 0.62,
@@ -54,6 +128,11 @@ static FRAME_TIMES: Mutex<Option<HashMap<u32, VecDeque<Instant>>>> = Mutex::new(
 const PROCESS_TRACE_MODE_REAL_TIME: u32 = 0x0000_0100;
 #[cfg(target_os = "windows")]
 const PROCESS_TRACE_MODE_EVENT_RECORD: u32 = 0x1000_0000;
+// Keep EventHeader.TimeStamp in the session clock (QPC, ClientContext = 1)
+// instead of letting ProcessTrace convert it to FILETIME system time;
+// fps_from_timestamps compares it against QueryPerformanceCounter.
+#[cfg(target_os = "windows")]
+const PROCESS_TRACE_MODE_RAW_TIMESTAMP: u32 = 0x0000_1000;
 #[cfg(target_os = "windows")]
 const INVALID_PROCESSTRACE_HANDLE: u64 = u64::MAX;
 
@@ -165,6 +244,9 @@ fn run_etw_session() -> Result<(), String> {
         props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
         props.Wnode.ClientContext = 1; // QPC clock
         props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+        // Flush buffers every second so delivery lag stays ~1s (typical, not
+        // guaranteed under load), see STALE_SECS
+        props.FlushTimer = 1;
         props.LoggerNameOffset = props_base as u32;
 
         // --- Start trace session ---
@@ -186,7 +268,9 @@ fn run_etw_session() -> Result<(), String> {
 
         // ProcessTraceMode (offset 28)
         *(p.add(OFF_PROCESS_TRACE_MODE) as *mut u32) =
-            PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+            PROCESS_TRACE_MODE_REAL_TIME
+                | PROCESS_TRACE_MODE_EVENT_RECORD
+                | PROCESS_TRACE_MODE_RAW_TIMESTAMP;
 
         // EventRecordCallback (offset 424)
         *(p.add(OFF_EVENT_RECORD_CALLBACK) as *mut usize) =
@@ -231,8 +315,14 @@ unsafe fn enable_provider(session: CONTROLTRACE_HANDLE, provider: &GUID) -> Resu
 unsafe extern "system" fn event_record_callback(record: *mut EVENT_RECORD) {
     let rec = &*record;
 
-    // Only count Start events (Opcode 1) to avoid double-counting
-    if rec.EventHeader.EventDescriptor.Opcode != 1 {
+    let provider = if rec.EventHeader.ProviderId == DXGI_PROVIDER {
+        PresentProvider::Dxgi
+    } else if rec.EventHeader.ProviderId == D3D9_PROVIDER {
+        PresentProvider::D3d9
+    } else {
+        return;
+    };
+    if !is_present_start(provider, rec.EventHeader.EventDescriptor.Id) {
         return;
     }
 
@@ -241,22 +331,14 @@ unsafe extern "system" fn event_record_callback(record: *mut EVENT_RECORD) {
         return;
     }
 
-    let now = Instant::now();
+    let Some(freq) = qpc_frequency() else {
+        return;
+    };
 
     if let Ok(mut guard) = FRAME_TIMES.lock() {
         if let Some(ref mut map) = *guard {
-            let times = map.entry(pid).or_insert_with(VecDeque::new);
-            times.push_back(now);
-
-            // Trim entries older than 2 seconds
-            let cutoff = now - Duration::from_secs(2);
-            while let Some(&front) = times.front() {
-                if front < cutoff {
-                    times.pop_front();
-                } else {
-                    break;
-                }
-            }
+            let times = map.entry(pid).or_default();
+            record_present(times, rec.EventHeader.TimeStamp, freq);
         }
     }
 }
@@ -267,19 +349,31 @@ unsafe extern "system" fn event_record_callback(record: *mut EVENT_RECORD) {
 
 #[cfg(target_os = "windows")]
 fn get_fps_for_pid(pid: u32) -> Option<u32> {
+    let freq = qpc_frequency()?;
+    let now = qpc_now()?;
     let guard = FRAME_TIMES.lock().ok()?;
-    let map = guard.as_ref()?;
-    let times = map.get(&pid)?;
+    let times = guard.as_ref()?.get(&pid)?;
+    fps_from_timestamps(times, now, freq)
+}
 
-    let now = Instant::now();
-    let one_sec_ago = now - Duration::from_secs(1);
-    let count = times.iter().filter(|&&t| t >= one_sec_ago).count() as u32;
+#[cfg(target_os = "windows")]
+fn qpc_frequency() -> Option<i64> {
+    use std::sync::OnceLock;
+    use windows::Win32::System::Performance::QueryPerformanceFrequency;
+    static FREQ: OnceLock<Option<i64>> = OnceLock::new();
+    *FREQ.get_or_init(|| {
+        let mut freq = 0i64;
+        unsafe { QueryPerformanceFrequency(&mut freq) }.ok()?;
+        (freq > 0).then_some(freq)
+    })
+}
 
-    if count == 0 {
-        None
-    } else {
-        Some(count)
-    }
+#[cfg(target_os = "windows")]
+fn qpc_now() -> Option<i64> {
+    use windows::Win32::System::Performance::QueryPerformanceCounter;
+    let mut now = 0i64;
+    unsafe { QueryPerformanceCounter(&mut now) }.ok()?;
+    Some(now)
 }
 
 #[cfg(target_os = "windows")]
@@ -350,4 +444,81 @@ pub fn stop() {}
 #[cfg(not(target_os = "windows"))]
 pub fn get_foreground_fps() -> Option<(u32, String)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FREQ: i64 = 10_000_000; // typical QPC frequency (100ns ticks)
+
+    fn frames(fps: i64, seconds: i64, start: i64) -> VecDeque<i64> {
+        let mut times = VecDeque::new();
+        for i in 0..fps * seconds {
+            record_present(&mut times, start + i * FREQ / fps, FREQ);
+        }
+        times
+    }
+
+    #[test]
+    fn matches_only_present_start_events() {
+        assert!(is_present_start(PresentProvider::Dxgi, 0x2a));
+        assert!(is_present_start(PresentProvider::Dxgi, 0x37));
+        assert!(!is_present_start(PresentProvider::Dxgi, 0x2b)); // Present_Stop
+        assert!(!is_present_start(PresentProvider::Dxgi, 0x01));
+        assert!(is_present_start(PresentProvider::D3d9, 0x01));
+        assert!(!is_present_start(PresentProvider::D3d9, 0x02));
+    }
+
+    #[test]
+    fn fps_is_derived_from_event_timestamps() {
+        for fps in [30, 60, 144, 240] {
+            let times = frames(fps, 3, 0);
+            let newest = *times.back().unwrap();
+            assert_eq!(fps_from_timestamps(&times, newest, FREQ), Some(fps as u32));
+        }
+    }
+
+    #[test]
+    fn delivery_latency_does_not_change_fps() {
+        // Batched ETW delivery: we read ~900ms after the last present
+        let times = frames(144, 3, 0);
+        let newest = *times.back().unwrap();
+        assert_eq!(fps_from_timestamps(&times, newest + FREQ * 9 / 10, FREQ), Some(144));
+    }
+
+    #[test]
+    fn stale_history_reports_nothing() {
+        let times = frames(60, 2, 0);
+        let newest = *times.back().unwrap();
+        assert_eq!(fps_from_timestamps(&times, newest + 3 * FREQ, FREQ), None);
+    }
+
+    #[test]
+    fn single_frame_or_empty_reports_nothing() {
+        assert_eq!(fps_from_timestamps(&VecDeque::new(), 0, FREQ), None);
+        assert_eq!(fps_from_timestamps(&VecDeque::from([5]), 5, FREQ), None);
+    }
+
+    #[test]
+    fn history_is_trimmed_to_keep_window() {
+        let times = frames(100, 5, 0);
+        let newest = *times.back().unwrap();
+        assert!(times.iter().all(|&t| t >= newest - KEEP_SECS * FREQ));
+    }
+
+    #[test]
+    fn out_of_order_events_are_tolerated() {
+        // Same 60fps stream, but neighbouring events delivered swapped
+        let mut ts: Vec<i64> = (0..120).map(|i| i * FREQ / 60).collect();
+        for pair in ts.chunks_mut(2) {
+            pair.swap(0, 1);
+        }
+        let mut times = VecDeque::new();
+        for t in &ts {
+            record_present(&mut times, *t, FREQ);
+        }
+        let newest = *ts.iter().max().unwrap();
+        assert_eq!(fps_from_timestamps(&times, newest, FREQ), Some(60));
+    }
 }
