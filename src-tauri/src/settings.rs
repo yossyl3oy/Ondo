@@ -21,7 +21,7 @@ pub struct WindowState {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub position: String,
-    pub opacity: u32,
+    pub section_opacity: u32,
     pub background_effect: String,
     pub always_on_top: bool,
     pub always_on_back: bool,
@@ -41,7 +41,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             position: "right".to_string(),
-            opacity: 0,
+            section_opacity: 80,
             background_effect: "none".to_string(),
             always_on_top: false,
             always_on_back: false,

@@ -107,8 +107,6 @@ function App() {
 
           // Remove min size constraint so window can shrink below 350px
           await invoke("set_window_min_size", { width: null, height: null });
-          // Disable window shadow to remove transparent border in mini mode
-          await invoke("set_window_shadow", { enable: false });
           // Make window click-through so users can interact with apps below
           await getCurrentWindow().setIgnoreCursorEvents(true);
 
@@ -139,8 +137,6 @@ function App() {
             width: Math.round(180 * dpr),
             height: Math.round(350 * dpr),
           });
-          // Re-enable window shadow
-          await invoke("set_window_shadow", { enable: true });
           // Restore click interaction
           await getCurrentWindow().setIgnoreCursorEvents(false);
           // Restore saved window size, then reposition to avoid overflow
@@ -299,8 +295,7 @@ function App() {
     <div
       className={`app-container${miniMode ? " mini" : ""}`}
       style={{
-        // The Background setting only tints the panel, never the text
-        "--hud-bg-opacity": settings.opacity / 100,
+        "--hud-section-opacity": settings.sectionOpacity / 100,
         opacity: miniMode
           ? miniInteractive || (cursorNear && updateNotificationVisible)
             ? 1
@@ -310,8 +305,6 @@ function App() {
           : 1,
       } as CSSProperties}
     >
-      {/* Scanlines over a transparent panel just stripe the desktop */}
-      {!miniMode && settings.opacity > 0 && <div className="scanlines" />}
       <HudWidget
         hardwareData={hardwareData}
         isLoading={isLoading}

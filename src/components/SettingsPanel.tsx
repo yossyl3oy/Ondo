@@ -108,19 +108,19 @@ export function SettingsPanel({
             </select>
           </div>
 
-          {/* Background opacity (text stays fully opaque) */}
+          {/* Section card opacity (panel background is always transparent) */}
           <div className="setting-group">
             <label className="setting-label">
-              Background: {settings.opacity}%
+              Section Opacity: {settings.sectionOpacity}%
             </label>
             <input
               type="range"
               className="setting-slider"
               min="0"
               max="100"
-              value={settings.opacity}
+              value={settings.sectionOpacity}
               onChange={(e) =>
-                onSettingsChange({ opacity: parseInt(e.target.value) })
+                onSettingsChange({ sectionOpacity: parseInt(e.target.value) })
               }
             />
           </div>

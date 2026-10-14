@@ -15,7 +15,6 @@
   --hud-text-secondary: #4a5a6e;
   --hud-border: rgba(0, 120, 160, 0.3);
   --hud-glow: rgba(0, 135, 173, 0.25);
-  --hud-scanline: rgba(0, 120, 160, 0.04);
   --hud-card: rgba(20, 50, 80, 0.05);
   --hud-divider: rgba(20, 50, 80, 0.10);
 }
@@ -36,7 +35,6 @@
   --hud-text-secondary: #8ec8e8;
   --hud-border: rgba(0, 212, 255, 0.5);
   --hud-glow: rgba(0, 245, 255, 0.8);
-  --hud-scanline: rgba(0, 212, 255, 0.15);
   --hud-card: rgba(142, 200, 232, 0.05);
   --hud-divider: rgba(142, 200, 232, 0.10);
 }
@@ -58,7 +56,6 @@
     --hud-text-secondary: #8ec8e8;
     --hud-border: rgba(0, 212, 255, 0.5);
     --hud-glow: rgba(0, 245, 255, 0.8);
-    --hud-scanline: rgba(0, 212, 255, 0.15);
     --hud-card: rgba(142, 200, 232, 0.05);
     --hud-divider: rgba(142, 200, 232, 0.10);
   }
@@ -82,35 +79,6 @@ html, body {
 
 #root {
   height: 100%;
-}
-
-/* Scanline effect overlay */
-.scanlines {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    var(--hud-scanline) 2px,
-    var(--hud-scanline) 4px
-  );
-  animation: scanlineMove 8s linear infinite;
-  opacity: 0.5;
-  z-index: 1000;
-}
-
-@keyframes scanlineMove {
-  0% {
-    background-position: 0 0;
-  }
-  100% {
-    background-position: 0 100px;
-  }
 }
 
 /* Glow text effect */

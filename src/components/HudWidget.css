@@ -149,10 +149,10 @@
 /* Sections */
 .hud-section {
   -webkit-app-region: no-drag;
-  /* Tint over a solid backing so cards stay readable when the panel
-     background is turned down to transparent */
+  /* Tint over a backing whose opacity is the Section Opacity setting;
+     the panel behind the cards is transparent */
   background: linear-gradient(var(--hud-card), var(--hud-card)),
-              rgba(var(--hud-bg-rgb), 0.78);
+              rgba(var(--hud-bg-rgb), var(--hud-section-opacity, 0.8));
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 6px;

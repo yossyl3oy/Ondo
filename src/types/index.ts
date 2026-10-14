@@ -76,7 +76,8 @@ export type BackgroundEffect = "none" | "acrylic" | "mica";
 
 export interface AppSettings {
   position: "right" | "left" | "top-right" | "top-left" | "bottom-right" | "bottom-left";
-  opacity: number;
+  /** Opacity of the section cards' backing, 0-100 (panel itself is transparent) */
+  sectionOpacity: number;
   backgroundEffect: BackgroundEffect;
   alwaysOnTop: boolean;
   alwaysOnBack: boolean;
@@ -93,7 +94,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   position: "right",
-  opacity: 0,
+  sectionOpacity: 80,
   backgroundEffect: "none",
   alwaysOnTop: false,
   alwaysOnBack: false,
