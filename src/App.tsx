@@ -15,6 +15,11 @@ import { useAudioDevices } from "./hooks/useAudioDevices";
 import type { WindowState, SectionType } from "./types";
 import "./styles/App.css";
 
+// Window height floor while the settings / restore overlay is open (CSS px)
+const OVERLAY_MIN_HEIGHT = 560;
+// The update notice floats 60px above the bottom; leave room for it plus the header
+const NOTICE_CLEARANCE = 110;
+
 function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -27,6 +32,16 @@ function App() {
   const [miniInteractive, setMiniInteractive] = useState(false);
   const savedWindowStateRef = useRef<WindowState | null>(null);
   const miniModeRef = useRef(false);
+  // Window fits run strictly in order, so a standard-mode fit still in
+  // flight can't re-apply the height lock after mini mode has dropped it
+  const fitChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const queueFit = useCallback((height: number | null) => {
+    fitChainRef.current = fitChainRef.current
+      .catch(() => {})
+      .then(() => invoke("fit_window_height", { height }))
+      .catch(() => {});
+    return fitChainRef.current;
+  }, []);
   const { settings, updateSettings } = useSettings();
   const { hardwareData, isLoading, error } = useHardwareData(settings.updateInterval);
   const { updateInfo, checking, downloading, progress, error: updateError, downloadAndInstall, checkForUpdate } = useUpdater();
@@ -105,8 +120,8 @@ function App() {
           // mini mode, the next launch must restore the standard-mode size
           await updateSettings({ windowState: currentState });
 
-          // Remove min size constraint so window can shrink below 350px
-          await invoke("set_window_min_size", { width: null, height: null });
+          // Drop the standard-mode height lock so the window can shrink
+          await queueFit(null);
           // Make window click-through so users can interact with apps below
           await getCurrentWindow().setIgnoreCursorEvents(true);
 
@@ -131,12 +146,6 @@ function App() {
             await invoke("set_window_position", { position: settings.position });
           });
         } else if (savedWindowStateRef.current) {
-          // Restore min size constraint
-          const dpr = window.devicePixelRatio || 1;
-          await invoke("set_window_min_size", {
-            width: Math.round(180 * dpr),
-            height: Math.round(350 * dpr),
-          });
           // Restore click interaction
           await getCurrentWindow().setIgnoreCursorEvents(false);
           // Restore saved window size, then reposition to avoid overflow
@@ -235,6 +244,62 @@ function App() {
 
   const updateNotificationVisible =
     showUpdateNotification && !!updateInfo?.available && !showSettings;
+
+  // Standard mode: the panel is transparent, so size the window to the HUD
+  // content and keep only the width user-resizable. Any extra height would
+  // be an invisible strip that still swallows clicks meant for the desktop.
+  useEffect(() => {
+    if (isBooting || miniMode) return;
+    const widget = document.querySelector<HTMLElement>(".hud-widget");
+    const header = widget?.querySelector<HTMLElement>(".hud-header");
+    const content = widget?.querySelector<HTMLElement>(".hud-content");
+    const sections = content?.querySelector<HTMLElement>(".hud-sections");
+    if (!widget || !header || !content || !sections) return;
+    const notice = document.querySelector<HTMLElement>(".update-notification");
+
+    let frame = 0;
+    let lastKey = "";
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (miniModeRef.current) return;
+        // Resizing mid-drag would shift the pointer's frame of reference
+        if (content.classList.contains("dragging")) return;
+        // Built only from parts whose size doesn't depend on the window's
+        // height, so the result can't feed back into itself (fractional DPI
+        // rounding would otherwise make it oscillate by a pixel)
+        const widgetStyle = getComputedStyle(widget);
+        let height =
+          parseFloat(widgetStyle.paddingTop) +
+          header.getBoundingClientRect().height +
+          parseFloat(getComputedStyle(header).marginBottom) +
+          sections.getBoundingClientRect().height +
+          parseFloat(widgetStyle.paddingBottom);
+        if (showSettings || showRestorePanel) {
+          height = Math.max(height, OVERLAY_MIN_HEIGHT);
+        }
+        if (notice) {
+          height = Math.max(height, notice.offsetHeight + NOTICE_CLEARANCE);
+        }
+        height = Math.ceil(height);
+        // Physical size depends on the scale too (monitor moves)
+        const key = `${height}@${window.devicePixelRatio}`;
+        if (key === lastKey) return;
+        lastKey = key;
+        queueFit(height);
+      });
+    };
+
+    const observer = new ResizeObserver(measure);
+    for (const el of [header, sections, notice]) if (el) observer.observe(el);
+    const unlistenScale = getCurrentWindow().onScaleChanged(measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      unlistenScale.then((fn) => fn()).catch(() => {});
+    };
+  }, [isBooting, miniMode, showSettings, showRestorePanel, updateNotificationVisible, queueFit]);
 
   // Mini mode makes the window click-through, which also blocks the audio
   // selector and the update notification's INSTALL button. Register their

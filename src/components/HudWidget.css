@@ -113,6 +113,12 @@
   overflow: visible;
 }
 
+/* Natural-height wrapper (App sizes the window to it). flow-root keeps the
+   last section's bottom margin inside instead of collapsing through */
+.hud-sections {
+  display: flow-root;
+}
+
 /* Loading & Error states */
 .hud-loading,
 .hud-error {
@@ -120,7 +126,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  /* The window is sized to the content, so give these states some room */
+  min-height: 160px;
   gap: 12px;
   color: var(--hud-text-secondary);
   font-size: 11px;
@@ -197,21 +204,26 @@
   justify-content: center;
   gap: 6px;
   padding: 12px;
-  margin-bottom: 4px;
-  flex-shrink: 0;
   border: 1px solid var(--hud-divider);
-  border-radius: 4px;
+  border-radius: 8px;
+  background: var(--hud-surface);
   color: var(--hud-text-secondary);
-  opacity: 0.6;
+  opacity: 0.9;
   transition: all 0.2s ease;
   animation: trashFadeIn 0.2s ease;
   z-index: 5;
-  position: relative;
+  /* Overlaid on the bottom of the HUD: the window is sized to the content,
+     so an in-flow zone would be pushed out of view */
+  position: absolute;
+  left: 8px;
+  right: 12px;
+  bottom: 8px;
 }
 
 .trash-zone.active {
   border-color: var(--hud-danger, #ff4444);
-  background: rgba(255, 68, 68, 0.1);
+  background: linear-gradient(rgba(255, 68, 68, 0.15), rgba(255, 68, 68, 0.15)),
+              var(--hud-surface);
   color: var(--hud-danger, #ff4444);
   opacity: 1;
   box-shadow: 0 0 12px rgba(255, 68, 68, 0.2);
@@ -223,7 +235,7 @@
     transform: translateY(8px);
   }
   to {
-    opacity: 0.6;
+    opacity: 0.9;
     transform: translateY(0);
   }
 }
@@ -796,49 +808,6 @@
   background: linear-gradient(90deg, #9b59b6, #e056fd);
   border-radius: 2px;
   transition: width 0.3s ease;
-}
-
-/* Footer */
-.hud-footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  margin-top: 4px;
-  font-size: 9px;
-  text-shadow: 0 1px 3px var(--hud-text-halo);
-}
-
-.status-indicator {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.status-indicator.online {
-  background: var(--hud-success);
-  box-shadow: 0 0 6px var(--hud-success);
-  animation: statusBlink 2s ease-in-out infinite;
-}
-
-@keyframes statusBlink {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-.status-text {
-  color: var(--hud-text-secondary);
-  letter-spacing: 1px;
-}
-
-.timestamp {
-  margin-left: auto;
-  font-family: 'Roboto Mono', monospace;
-  color: var(--hud-text-secondary);
 }
 
 /* Storage Section */

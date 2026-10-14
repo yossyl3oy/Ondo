@@ -21,14 +21,6 @@ function formatAudioSpec(device: AudioDevice | undefined): string | null {
   return `${khz}kHz · ${f.bits_per_sample}bit · ${f.channels}ch`;
 }
 
-// Module-level formatter: creating an Intl.DateTimeFormat on every render
-// (which toLocaleTimeString with options does) is comparatively expensive.
-const TIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
-
 interface DragInfo {
   sectionType: SectionType;
   startY: number;
@@ -1075,6 +1067,8 @@ export function HudWidget({
 
       {/* Main content */}
       <div className={`hud-content${isDragging ? " dragging" : ""}`}>
+        {/* Natural-height wrapper: App sizes the window to this */}
+        <div className="hud-sections">
         {isLoading && !cpu && !gpu ? (
           <div className="hud-loading">
             <div className="loading-spinner" />
@@ -1106,6 +1100,7 @@ export function HudWidget({
             })}
           </>
         )}
+        </div>
       </div>
 
       {/* Trash zone - fixed at bottom during drag */}
@@ -1119,13 +1114,6 @@ export function HudWidget({
           </svg>
         </div>
       )}
-
-      {/* Footer status */}
-      <div className="hud-footer">
-        <div className="status-indicator online" />
-        <span className="status-text">MONITORING</span>
-        <span className="timestamp">{TIME_FORMATTER.format(new Date())}</span>
-      </div>
     </div>
   );
 }

@@ -100,6 +100,11 @@ mockIPC((cmd, payload) => {
       console.log("[devMock] interactive zones:", (payload as { zones: unknown }).zones);
       return undefined;
     }
+    case "fit_window_height": {
+      const { height } = payload as { height: number | null };
+      (window as unknown as { __fitHeight: unknown }).__fitHeight = height;
+      return undefined;
+    }
     case "plugin:updater|check":
       return { rid: 1, available: true, currentVersion: "0.1.26", version: "0.1.27" };
     default:

@@ -594,26 +594,6 @@ async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<
 }
 
 #[tauri::command]
-async fn set_window_min_size(
-    app: AppHandle,
-    width: Option<u32>,
-    height: Option<u32>,
-) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        let min_size = match (width, height) {
-            (Some(w), Some(h)) => Some(tauri::PhysicalSize::new(w, h)),
-            _ => None,
-        };
-        window.set_min_size(min_size).map_err(|e| {
-            let err = e.to_string();
-            error_reporting::capture_window_error(&err, "set_window_min_size");
-            err
-        })?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
 async fn get_audio_devices() -> Result<Vec<audio::AudioDevice>, String> {
     audio::get_audio_devices()
 }
@@ -647,13 +627,9 @@ fn anchored_axis(origin: i32, monitor_len: u32, window_len: u32, anchor: AxisAnc
     coordinate.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
-fn anchored_window_position(
-    monitor_position: tauri::PhysicalPosition<i32>,
-    monitor_size: tauri::PhysicalSize<u32>,
-    window_size: tauri::PhysicalSize<u32>,
-    position: &str,
-) -> tauri::PhysicalPosition<i32> {
-    let (horizontal, vertical) = match position {
+/// (horizontal, vertical) anchors for a `position` setting value.
+fn position_anchors(position: &str) -> (AxisAnchor, AxisAnchor) {
+    match position {
         "left" => (AxisAnchor::Start, AxisAnchor::Center),
         "right" => (AxisAnchor::End, AxisAnchor::Center),
         "top-left" => (AxisAnchor::Start, AxisAnchor::Start),
@@ -661,7 +637,111 @@ fn anchored_window_position(
         "bottom-left" => (AxisAnchor::Start, AxisAnchor::End),
         "bottom-right" => (AxisAnchor::End, AxisAnchor::End),
         _ => (AxisAnchor::End, AxisAnchor::Center),
+    }
+}
+
+/// New (y, height) when the window is resized to `wanted_h`. The edge the
+/// position setting anchors to stays put (top / center / bottom), and the
+/// result is kept inside the monitor work area, capping the height there
+/// (the HUD content scrolls beyond that).
+fn fitted_vertical_span(
+    cur_y: i32,
+    cur_h: u32,
+    wanted_h: u32,
+    anchor: AxisAnchor,
+    area_top: i32,
+    area_h: u32,
+) -> (i32, u32) {
+    let h = wanted_h.min(area_h).max(1);
+    let (cur_y, cur_h, h64) = (i64::from(cur_y), i64::from(cur_h), i64::from(h));
+    let y = match anchor {
+        AxisAnchor::Start => cur_y,
+        AxisAnchor::Center => cur_y + (cur_h - h64) / 2,
+        AxisAnchor::End => cur_y + cur_h - h64,
     };
+    let top = i64::from(area_top);
+    let max_y = (top + i64::from(area_h) - h64).max(top);
+    (y.clamp(top, max_y) as i32, h)
+}
+
+/// Minimum window width in CSS px (matches `minWidth` in tauri.conf.json).
+const MIN_WINDOW_WIDTH: f64 = 180.0;
+
+/// Sizes the window to the HUD content (`height` in CSS px) and locks the
+/// height there so only the width stays user-resizable — the panel is
+/// transparent, so any extra height would be an invisible, click-blocking
+/// strip. `None` drops the lock (mini mode sizes the window itself).
+#[tauri::command]
+async fn fit_window_height(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    height: Option<f64>,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let fail = |e: tauri::Error| {
+        let err = e.to_string();
+        error_reporting::capture_window_error(&err, "fit_window_height");
+        err
+    };
+
+    // Drop the previous lock first so the new height isn't clamped by it
+    window.set_min_size(None::<tauri::Size>).map_err(fail)?;
+    window.set_max_size(None::<tauri::Size>).map_err(fail)?;
+    let Some(css_height) = height else {
+        return Ok(());
+    };
+
+    let scale = window.scale_factor().map_err(fail)?;
+    let pos = window.outer_position().map_err(fail)?;
+    let size = window.outer_size().map_err(fail)?;
+    let Some(monitor) = window.current_monitor().map_err(fail)? else {
+        return Ok(());
+    };
+    let area = monitor.work_area();
+    let position = state
+        .settings
+        .lock()
+        .map(|s| s.position.clone())
+        .unwrap_or_default();
+    let (_, vertical) = position_anchors(&position);
+
+    let wanted = (css_height * scale).round().max(1.0) as u32;
+    let (y, h) = fitted_vertical_span(
+        pos.y,
+        size.height,
+        wanted,
+        vertical,
+        area.position.y,
+        area.size.height,
+    );
+
+    window
+        .set_size(tauri::PhysicalSize::new(size.width, h))
+        .map_err(fail)?;
+    if y != pos.y {
+        window
+            .set_position(tauri::PhysicalPosition::new(pos.x, y))
+            .map_err(fail)?;
+    }
+    let min_w = (MIN_WINDOW_WIDTH * scale).round() as u32;
+    window
+        .set_min_size(Some(tauri::PhysicalSize::new(min_w, h)))
+        .map_err(fail)?;
+    window
+        .set_max_size(Some(tauri::PhysicalSize::new(area.size.width.max(min_w), h)))
+        .map_err(fail)?;
+    Ok(())
+}
+
+fn anchored_window_position(
+    monitor_position: tauri::PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+    window_size: tauri::PhysicalSize<u32>,
+    position: &str,
+) -> tauri::PhysicalPosition<i32> {
+    let (horizontal, vertical) = position_anchors(position);
 
     tauri::PhysicalPosition::new(
         anchored_axis(
@@ -757,11 +837,11 @@ fn main() {
             set_always_on_top,
             set_always_on_back,
             set_background_effect,
+            fit_window_height,
             set_window_position,
             set_auto_start,
             get_window_state,
             restore_window_state,
-            set_window_min_size,
             window_monitor::set_mini_interactive_zones,
             check_pawnio_status,
             download_and_install_pawnio,
@@ -806,6 +886,42 @@ mod tests {
     fn background_effect_maps_known_values() {
         assert_eq!(window_effects_for("acrylic").unwrap().effects, vec![Effect::Acrylic]);
         assert_eq!(window_effects_for("mica").unwrap().effects, vec![Effect::Mica]);
+    }
+
+    const AREA_TOP: i32 = 0;
+    const AREA_H: u32 = 1040; // 1080p minus taskbar
+
+    #[test]
+    fn fit_keeps_top_edge_for_top_anchors() {
+        assert_eq!(fitted_vertical_span(100, 800, 500, AxisAnchor::Start, AREA_TOP, AREA_H), (100, 500));
+    }
+
+    #[test]
+    fn fit_keeps_bottom_edge_for_bottom_anchors() {
+        // bottom stays at 900
+        assert_eq!(fitted_vertical_span(100, 800, 500, AxisAnchor::End, AREA_TOP, AREA_H), (400, 500));
+        assert_eq!(fitted_vertical_span(400, 500, 700, AxisAnchor::End, AREA_TOP, AREA_H), (200, 700));
+    }
+
+    #[test]
+    fn fit_keeps_center_for_centered_anchors() {
+        // center stays at 520
+        assert_eq!(fitted_vertical_span(120, 800, 400, AxisAnchor::Center, AREA_TOP, AREA_H), (320, 400));
+    }
+
+    #[test]
+    fn fit_caps_height_to_work_area() {
+        assert_eq!(fitted_vertical_span(0, 500, 5000, AxisAnchor::Start, AREA_TOP, AREA_H), (0, AREA_H));
+    }
+
+    #[test]
+    fn fit_stays_inside_work_area() {
+        // Growing a top-anchored window near the bottom pushes it up
+        assert_eq!(fitted_vertical_span(900, 100, 400, AxisAnchor::Start, AREA_TOP, AREA_H), (640, 400));
+        // Growing a bottom-anchored window near the top pushes it down
+        assert_eq!(fitted_vertical_span(10, 100, 400, AxisAnchor::End, AREA_TOP, AREA_H), (0, 400));
+        // Secondary monitor above the primary (negative origin)
+        assert_eq!(fitted_vertical_span(-1000, 300, 600, AxisAnchor::Start, -1080, AREA_H), (-1000, 600));
     }
 
     #[test]
