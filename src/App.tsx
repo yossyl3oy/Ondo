@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import type { CSSProperties } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -167,6 +168,14 @@ function App() {
     }
   }, [settings.theme]);
 
+  // Native backdrop blur. Mini mode floats chips over the desktop, so the
+  // effect is dropped there or the whole mini window would turn frosted.
+  useEffect(() => {
+    invoke("set_background_effect", {
+      effect: miniMode ? "none" : settings.backgroundEffect,
+    }).catch(() => {});
+  }, [miniMode, settings.backgroundEffect]);
+
   // Save window state periodically and before close
   const saveWindowStateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -290,16 +299,19 @@ function App() {
     <div
       className={`app-container${miniMode ? " mini" : ""}`}
       style={{
+        // The Background setting only tints the panel, never the text
+        "--hud-bg-opacity": settings.opacity / 100,
         opacity: miniMode
           ? miniInteractive || (cursorNear && updateNotificationVisible)
-            ? settings.opacity / 100
+            ? 1
             : cursorNear
-              ? (settings.opacity / 100) * 0.1
-              : (settings.opacity / 100) * 0.5
-          : settings.opacity / 100,
-      }}
+              ? 0.1
+              : 0.5
+          : 1,
+      } as CSSProperties}
     >
-      {!miniMode && <div className="scanlines" />}
+      {/* Scanlines over a transparent panel just stripe the desktop */}
+      {!miniMode && settings.opacity > 0 && <div className="scanlines" />}
       <HudWidget
         hardwareData={hardwareData}
         isLoading={isLoading}

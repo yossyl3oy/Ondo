@@ -39,10 +39,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  margin-bottom: 8px;
-  background: var(--hud-surface);
-  border: 1px solid var(--hud-border);
-  border-radius: 4px;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 3px var(--hud-text-halo);
 }
 
 .hud-title {
@@ -99,8 +97,7 @@
 
 .hud-settings-btn:hover {
   color: var(--hud-primary);
-  border-color: var(--hud-border);
-  background: var(--hud-surface);
+  background: var(--hud-card);
 }
 
 /* Main content */
@@ -152,11 +149,13 @@
 /* Sections */
 .hud-section {
   -webkit-app-region: no-drag;
-  background: var(--hud-surface);
-  border: 1px solid var(--hud-border);
-  border-radius: 4px;
-  padding: 8px;
-  margin-bottom: 8px;
+  /* Tint over a solid backing so cards stay readable when the panel
+     background is turned down to transparent */
+  background: linear-gradient(var(--hud-card), var(--hud-card)),
+              rgba(var(--hud-bg-rgb), 0.78);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 6px;
   animation: sectionSlideIn 0.3s ease;
   cursor: grab;
   position: relative;
@@ -176,8 +175,8 @@
 
 .hud-section.dragging {
   z-index: 10;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 12px var(--hud-glow);
-  border-color: var(--hud-accent);
+  background: var(--hud-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--hud-divider);
   opacity: 0.95;
   transition: opacity 0.2s ease;
 }
@@ -200,7 +199,7 @@
   padding: 12px;
   margin-bottom: 4px;
   flex-shrink: 0;
-  border: 1px dashed var(--hud-border);
+  border: 1px solid var(--hud-divider);
   border-radius: 4px;
   color: var(--hud-text-secondary);
   opacity: 0.6;
@@ -255,14 +254,13 @@
 
 .hud-restore-btn:hover {
   color: var(--hud-primary);
-  border-color: var(--hud-border);
-  background: var(--hud-surface);
+  background: var(--hud-card);
 }
 
 .storage-drive-separator {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 @keyframes sectionSlideIn {
@@ -282,7 +280,7 @@
   gap: 6px;
   margin-bottom: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--hud-border);
+  border-bottom: 1px solid var(--hud-divider);
 }
 
 .section-indicator {
@@ -374,7 +372,7 @@
 .network-iface-separator {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 .network-iface-name {
@@ -620,7 +618,7 @@
   gap: 4px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
   cursor: pointer;
 }
 
@@ -703,7 +701,7 @@
   gap: 8px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 .frequency-label {
@@ -726,7 +724,7 @@
   gap: 8px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 /* GPU Memory */
@@ -736,7 +734,7 @@
   gap: 8px;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 .memory-label {
@@ -772,11 +770,9 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  margin-top: 8px;
-  background: var(--hud-surface);
-  border: 1px solid var(--hud-border);
-  border-radius: 4px;
+  margin-top: 4px;
   font-size: 9px;
+  text-shadow: 0 1px 3px var(--hud-text-halo);
 }
 
 .status-indicator {
@@ -822,7 +818,7 @@
   gap: 8px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed var(--hud-border);
+  border-top: 1px solid var(--hud-divider);
 }
 
 .storage-capacity-info .capacity-label {

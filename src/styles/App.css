@@ -4,45 +4,14 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--hud-background);
-  border-left: 1px solid var(--hud-border);
+  /* --hud-bg-opacity is driven by the Background setting so text stays crisp */
+  background: rgba(var(--hud-bg-rgb), var(--hud-bg-opacity, 0.92));
   transition: opacity 0.3s ease;
-}
-
-/* Corner decorations - Iron Man style */
-.app-container::before,
-.app-container::after {
-  content: '';
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border-color: var(--hud-primary);
-  border-style: solid;
-  pointer-events: none;
-  opacity: 0.6;
-}
-
-.app-container::before {
-  top: 8px;
-  left: 8px;
-  border-width: 2px 0 0 2px;
-}
-
-.app-container::after {
-  bottom: 8px;
-  left: 8px;
-  border-width: 0 0 2px 2px;
 }
 
 /* Mini mode: transparent container so only the row chips show against the desktop */
 .app-container.mini {
   background: transparent;
-  border-left: none;
-}
-
-.app-container.mini::before,
-.app-container.mini::after {
-  display: none;
 }
 
 /* Drag region */

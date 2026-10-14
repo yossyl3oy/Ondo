@@ -215,6 +215,41 @@ async fn set_always_on_top(app: AppHandle, enabled: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Maps the `backgroundEffect` setting to a native backdrop. Unknown values
+/// (and "none") clear the effect rather than erroring, so a stale setting
+/// from a newer build degrades to the plain translucent panel.
+fn window_effects_for(effect: &str) -> Option<tauri::utils::config::WindowEffectsConfig> {
+    use tauri::window::{Effect, EffectsBuilder};
+    let effect = match effect {
+        "acrylic" => Effect::Acrylic,
+        "mica" => Effect::Mica,
+        _ => return None,
+    };
+    Some(EffectsBuilder::new().effect(effect).build())
+}
+
+#[tauri::command]
+async fn set_background_effect(app: AppHandle, effect: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        // Tauri's Windows backend applies a new effect without clearing the
+        // previous one (Acrylic and Mica use separate DWM attributes), so
+        // always reset first or switching Acrylic → Mica can leave both on.
+        let effects = window_effects_for(&effect);
+        window
+            .set_effects(None)
+            .and_then(|()| match effects {
+                Some(effects) => window.set_effects(effects),
+                None => Ok(()),
+            })
+            .map_err(|e| {
+                let err = e.to_string();
+                error_reporting::capture_window_error(&err, "set_background_effect");
+                err
+            })?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn set_window_position(app: AppHandle, position: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -733,6 +768,7 @@ fn main() {
             save_settings,
             set_always_on_top,
             set_always_on_back,
+            set_background_effect,
             set_window_position,
             set_auto_start,
             get_window_state,
@@ -772,4 +808,22 @@ fn set_initial_position(
         anchored_window_position(*monitor.position(), *monitor.size(), window_size, position);
     window.set_position(position)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::window::Effect;
+
+    #[test]
+    fn background_effect_maps_known_values() {
+        assert_eq!(window_effects_for("acrylic").unwrap().effects, vec![Effect::Acrylic]);
+        assert_eq!(window_effects_for("mica").unwrap().effects, vec![Effect::Mica]);
+    }
+
+    #[test]
+    fn background_effect_none_or_unknown_clears() {
+        assert!(window_effects_for("none").is_none());
+        assert!(window_effects_for("frosted-glass").is_none());
+    }
 }

@@ -108,21 +108,39 @@ export function SettingsPanel({
             </select>
           </div>
 
-          {/* Opacity */}
+          {/* Background opacity (text stays fully opaque) */}
           <div className="setting-group">
             <label className="setting-label">
-              Opacity: {settings.opacity}%
+              Background: {settings.opacity}%
             </label>
             <input
               type="range"
               className="setting-slider"
-              min="30"
+              min="0"
               max="100"
               value={settings.opacity}
               onChange={(e) =>
                 onSettingsChange({ opacity: parseInt(e.target.value) })
               }
             />
+          </div>
+
+          {/* Background Effect */}
+          <div className="setting-group">
+            <label className="setting-label">Background Effect</label>
+            <select
+              className="setting-select"
+              value={settings.backgroundEffect}
+              onChange={(e) =>
+                onSettingsChange({
+                  backgroundEffect: e.target.value as AppSettings["backgroundEffect"],
+                })
+              }
+            >
+              <option value="none">None</option>
+              <option value="acrylic">Acrylic</option>
+              <option value="mica">Mica (Windows 11)</option>
+            </select>
           </div>
 
           {/* Update Interval */}

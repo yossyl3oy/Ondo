@@ -1,19 +1,23 @@
 /* Light Theme (default) */
 :root,
 :root[data-theme="light"] {
-  --hud-primary: #00b4d8;
-  --hud-secondary: #0077b6;
-  --hud-accent: #00f5ff;
-  --hud-warning: #ff6b35;
-  --hud-danger: #ff0040;
-  --hud-success: #00ff88;
-  --hud-background: rgba(255, 255, 255, 0.85);
-  --hud-surface: rgba(240, 248, 255, 0.9);
-  --hud-text: #1a1a2e;
-  --hud-text-secondary: #4a4a6a;
-  --hud-border: rgba(0, 180, 216, 0.4);
-  --hud-glow: rgba(0, 245, 255, 0.6);
-  --hud-scanline: rgba(0, 180, 216, 0.1);
+  --hud-primary: #0087ad;
+  --hud-secondary: #00627f;
+  --hud-accent: #007a9e;
+  --hud-warning: #d4500f;
+  --hud-danger: #d6002f;
+  --hud-success: #00995c;
+  --hud-background: rgba(250, 252, 254, 0.94);
+  --hud-bg-rgb: 250, 252, 254;
+  --hud-text-halo: rgba(255, 255, 255, 0.8);
+  --hud-surface: rgba(240, 246, 250, 0.98);
+  --hud-text: #14202e;
+  --hud-text-secondary: #4a5a6e;
+  --hud-border: rgba(0, 120, 160, 0.3);
+  --hud-glow: rgba(0, 135, 173, 0.25);
+  --hud-scanline: rgba(0, 120, 160, 0.04);
+  --hud-card: rgba(20, 50, 80, 0.05);
+  --hud-divider: rgba(20, 50, 80, 0.10);
 }
 
 /* Dark Theme */
@@ -25,12 +29,16 @@
   --hud-danger: #ff3366;
   --hud-success: #00ff9f;
   --hud-background: rgba(10, 15, 30, 0.92);
+  --hud-bg-rgb: 10, 15, 30;
+  --hud-text-halo: rgba(0, 0, 0, 0.7);
   --hud-surface: rgba(20, 30, 50, 0.95);
   --hud-text: #e0f7ff;
   --hud-text-secondary: #8ec8e8;
   --hud-border: rgba(0, 212, 255, 0.5);
   --hud-glow: rgba(0, 245, 255, 0.8);
   --hud-scanline: rgba(0, 212, 255, 0.15);
+  --hud-card: rgba(142, 200, 232, 0.05);
+  --hud-divider: rgba(142, 200, 232, 0.10);
 }
 
 /* Auto theme - follows system preference */
@@ -43,12 +51,16 @@
     --hud-danger: #ff3366;
     --hud-success: #00ff9f;
     --hud-background: rgba(10, 15, 30, 0.92);
+  --hud-bg-rgb: 10, 15, 30;
+  --hud-text-halo: rgba(0, 0, 0, 0.7);
     --hud-surface: rgba(20, 30, 50, 0.95);
     --hud-text: #e0f7ff;
     --hud-text-secondary: #8ec8e8;
     --hud-border: rgba(0, 212, 255, 0.5);
     --hud-glow: rgba(0, 245, 255, 0.8);
     --hud-scanline: rgba(0, 212, 255, 0.15);
+    --hud-card: rgba(142, 200, 232, 0.05);
+    --hud-divider: rgba(142, 200, 232, 0.10);
   }
 }
 

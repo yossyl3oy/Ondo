@@ -22,6 +22,7 @@ pub struct WindowState {
 pub struct AppSettings {
     pub position: String,
     pub opacity: u32,
+    pub background_effect: String,
     pub always_on_top: bool,
     pub always_on_back: bool,
     pub auto_start: bool,
@@ -40,7 +41,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             position: "right".to_string(),
-            opacity: 95,
+            opacity: 0,
+            background_effect: "none".to_string(),
             always_on_top: false,
             always_on_back: false,
             auto_start: false,
