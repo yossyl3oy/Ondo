@@ -11,6 +11,19 @@
   z-index: 200;
 }
 
+/* Mini mode: the window is only ~120px tall, so pin the notification inside
+   the window bounds instead of floating it 60px above the bottom edge */
+.app-container.mini .update-notification {
+  inset: 2px;
+  bottom: 2px;
+  padding: 6px;
+  overflow: hidden;
+}
+
+.app-container.mini .update-header {
+  margin-bottom: 4px;
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;

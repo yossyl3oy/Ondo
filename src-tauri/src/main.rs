@@ -738,6 +738,7 @@ fn main() {
             get_window_state,
             restore_window_state,
             set_window_min_size,
+            window_monitor::set_mini_interactive_zones,
             set_window_shadow,
             check_pawnio_status,
             download_and_install_pawnio,

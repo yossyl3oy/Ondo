@@ -970,15 +970,32 @@ export function HudWidget({
           );
           break;
         case "audio": {
-          const defaultPlayback = audioDevices.find(
-            (d) => d.device_type === "playback" && d.is_default,
+          const playbackDevices = audioDevices.filter(
+            (d) => d.device_type === "playback",
           );
-          const name = defaultPlayback?.name ?? "No device";
+          const defaultPlayback = playbackDevices.find((d) => d.is_default);
           rows.push(
             <div key="audio" className="mini-row audio">
               <div className="section-indicator audio" />
               <span className="mini-label">OUT</span>
-              <span className="mini-name" title={name}>{name}</span>
+              <select
+                className="audio-device-select mini"
+                value={defaultPlayback?.id ?? ""}
+                onChange={(e) => onSwitchAudioDevice(e.target.value, "playback")}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                disabled={audioSwitching || playbackDevices.length === 0}
+                title={defaultPlayback?.name ?? "No device"}
+              >
+                {playbackDevices.map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.name}
+                  </option>
+                ))}
+                {playbackDevices.length === 0 && (
+                  <option value="">No device</option>
+                )}
+              </select>
             </div>
           );
           break;

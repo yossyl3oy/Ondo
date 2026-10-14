@@ -1,9 +1,23 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 static LAST_STATE: AtomicBool = AtomicBool::new(false);
 static LAST_CURSOR_NEAR: AtomicBool = AtomicBool::new(false);
+static LAST_INTERACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Regions of the webview (logical CSS px, relative to the window's top-left)
+/// that stay clickable while mini mode is otherwise click-through.
+static INTERACTIVE_ZONES: Mutex<Vec<InteractiveZone>> = Mutex::new(Vec::new());
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct InteractiveZone {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct MiniModePayload {
@@ -13,6 +27,51 @@ struct MiniModePayload {
 #[derive(Debug, Clone, Serialize)]
 struct CursorNearPayload {
     near: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InteractivePayload {
+    interactive: bool,
+}
+
+/// Replace the set of clickable regions for mini mode. An empty list makes
+/// the window fully click-through again.
+#[tauri::command]
+pub fn set_mini_interactive_zones(zones: Vec<InteractiveZone>) {
+    if let Ok(mut stored) = INTERACTIVE_ZONES.lock() {
+        *stored = zones;
+    }
+}
+
+fn point_in_zones(x: f64, y: f64, zones: &[InteractiveZone]) -> bool {
+    zones
+        .iter()
+        .any(|z| x >= z.x && x <= z.x + z.width && y >= z.y && y <= z.y + z.height)
+}
+
+/// Whether the cursor is currently inside one of the registered interactive
+/// zones of the Ondo window.
+fn is_cursor_in_interactive_zone(app: &AppHandle) -> bool {
+    let zones = match INTERACTIVE_ZONES.lock() {
+        Ok(z) if !z.is_empty() => z.clone(),
+        _ => return false,
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let Ok(pos) = window.outer_position() else {
+        return false;
+    };
+    let Ok(scale) = window.scale_factor() else {
+        return false;
+    };
+    let Some((cx, cy)) = get_cursor_position() else {
+        return false;
+    };
+
+    let rel_x = f64::from(cx - pos.x) / scale;
+    let rel_y = f64::from(cy - pos.y) / scale;
+    point_in_zones(rel_x, rel_y, &zones)
 }
 
 /// Start background monitoring for maximized/fullscreen windows on Ondo's
@@ -77,6 +136,26 @@ pub fn start_monitoring(app: AppHandle) {
                     LAST_CURSOR_NEAR.store(near, Ordering::Relaxed);
                     let _ = app.emit("cursor-near-minimode", CursorNearPayload { near });
                 }
+
+                // Accept clicks only while the cursor is over a registered
+                // interactive zone (audio selector, update notification)
+                let inside = near && is_cursor_in_interactive_zone(&app);
+                let prev_inside = LAST_INTERACTIVE.load(Ordering::Relaxed);
+                if inside != prev_inside {
+                    LAST_INTERACTIVE.store(inside, Ordering::Relaxed);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.set_ignore_cursor_events(!inside);
+                    }
+                    let _ = app.emit(
+                        "minimode-interactive",
+                        InteractivePayload {
+                            interactive: inside,
+                        },
+                    );
+                }
+            } else if LAST_INTERACTIVE.swap(false, Ordering::Relaxed) {
+                // Left mini mode while a zone was active; the frontend's exit
+                // handler restores cursor events, so only reset our state
             }
         }
     });
@@ -484,6 +563,45 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(cf: *const std::ffi::c_void);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zone(x: f64, y: f64, width: f64, height: f64) -> InteractiveZone {
+        InteractiveZone {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn point_inside_single_zone() {
+        let zones = [zone(10.0, 100.0, 160.0, 20.0)];
+        assert!(point_in_zones(90.0, 110.0, &zones));
+    }
+
+    #[test]
+    fn point_on_zone_edge_counts_as_inside() {
+        let zones = [zone(10.0, 100.0, 160.0, 20.0)];
+        assert!(point_in_zones(10.0, 100.0, &zones));
+        assert!(point_in_zones(170.0, 120.0, &zones));
+    }
+
+    #[test]
+    fn point_outside_all_zones() {
+        let zones = [zone(10.0, 100.0, 160.0, 20.0), zone(2.0, 2.0, 30.0, 10.0)];
+        assert!(!point_in_zones(90.0, 90.0, &zones));
+        assert!(!point_in_zones(-5.0, 110.0, &zones));
+    }
+
+    #[test]
+    fn empty_zones_never_match() {
+        assert!(!point_in_zones(0.0, 0.0, &[]));
+    }
 }
 
 // ── Fallback for other platforms ────────────────────────────────────────────

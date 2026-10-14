@@ -4,16 +4,25 @@ import { Sentry, initSentry } from "./sentry";
 import App from "./App";
 import "./styles/global.css";
 
-// Initialize Sentry error tracking
-initSentry();
+async function bootstrap() {
+  // Browser preview: `pnpm dev` + `?mock` swaps the Tauri IPC for a mock
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock")) {
+    await import("./devMock");
+  }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
-      <App />
-    </Sentry.ErrorBoundary>
-  </React.StrictMode>
-);
+  // Initialize Sentry error tracking
+  initSentry();
+
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
+        <App />
+      </Sentry.ErrorBoundary>
+    </React.StrictMode>
+  );
+}
+
+bootstrap();
 
 function ErrorFallback() {
   return (

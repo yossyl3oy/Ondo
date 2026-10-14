@@ -23,6 +23,7 @@ function App() {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [miniMode, setMiniMode] = useState(false);
   const [cursorNear, setCursorNear] = useState(false);
+  const [miniInteractive, setMiniInteractive] = useState(false);
   const savedWindowStateRef = useRef<WindowState | null>(null);
   const miniModeRef = useRef(false);
   const { settings, updateSettings } = useSettings();
@@ -227,6 +228,52 @@ function App() {
     updateSettings({ hiddenSections: hidden });
   }, [updateSettings]);
 
+  const updateNotificationVisible =
+    showUpdateNotification && !!updateInfo?.available && !showSettings;
+
+  // Mini mode makes the window click-through, which also blocks the audio
+  // selector and the update notification's INSTALL button. Register their
+  // rects as interactive zones; the Rust cursor monitor flips cursor events
+  // back on only while the cursor is inside one of them.
+  useEffect(() => {
+    if (!miniMode) {
+      setMiniInteractive(false);
+      invoke("set_mini_interactive_zones", { zones: [] }).catch(() => {});
+      return;
+    }
+    const measure = () => {
+      const zones = [
+        ...document.querySelectorAll(
+          ".mini-row.audio .audio-device-select, .update-notification",
+        ),
+      ].map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      });
+      invoke("set_mini_interactive_zones", { zones }).catch(() => {});
+    };
+    // Wait for the mini layout to settle (the window is resized a frame later)
+    const timer = setTimeout(measure, 150);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", measure);
+    };
+  }, [miniMode, updateNotificationVisible, settings.sectionOrder, settings.hiddenSections]);
+
+  // Track whether the cursor is currently inside an interactive zone
+  useEffect(() => {
+    const unlisten = listen<{ interactive: boolean }>(
+      "minimode-interactive",
+      (event) => {
+        setMiniInteractive(event.payload.interactive);
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const handleRestoreSection = useCallback((type: SectionType) => {
     const newHidden = settings.hiddenSections.filter((t) => t !== type);
     updateSettings({ hiddenSections: newHidden });
@@ -242,7 +289,15 @@ function App() {
   return (
     <div
       className={`app-container${miniMode ? " mini" : ""}`}
-      style={{ opacity: miniMode ? (cursorNear ? (settings.opacity / 100) * 0.1 : (settings.opacity / 100) * 0.5) : settings.opacity / 100 }}
+      style={{
+        opacity: miniMode
+          ? miniInteractive || (cursorNear && updateNotificationVisible)
+            ? settings.opacity / 100
+            : cursorNear
+              ? (settings.opacity / 100) * 0.1
+              : (settings.opacity / 100) * 0.5
+          : settings.opacity / 100,
+      }}
     >
       {!miniMode && <div className="scanlines" />}
       <HudWidget
