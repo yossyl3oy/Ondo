@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioDevice } from "../types";
+import { accrueUsage, loadUsage, saveUsage, sortByUsage } from "../audioUsage";
 
 interface UseAudioDevicesReturn {
   devices: AudioDevice[];
@@ -14,11 +15,20 @@ export function useAudioDevices(): UseAudioDevicesReturn {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Time each device has spent as the default drives the list order
+  const usageRef = useRef(loadUsage());
+  const lastPollRef = useRef<number | null>(null);
 
   const fetchDevices = useCallback(async () => {
     try {
       const result = await invoke<AudioDevice[]>("get_audio_devices");
-      setDevices(result);
+      const now = Date.now();
+      if (lastPollRef.current !== null) {
+        usageRef.current = accrueUsage(usageRef.current, result, (now - lastPollRef.current) / 1000);
+        saveUsage(usageRef.current);
+      }
+      lastPollRef.current = now;
+      setDevices(sortByUsage(result, usageRef.current));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
