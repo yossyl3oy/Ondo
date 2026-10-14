@@ -62,9 +62,9 @@ function fakeHardware(): HardwareData {
 }
 
 const audioDevices = [
-  { id: "spk-1", name: "スピーカー (RME Babyface Pro)", is_default: true, device_type: "playback" },
-  { id: "spk-2", name: "ヘッドホン (Sony WH-1000XM5)", is_default: false, device_type: "playback" },
-  { id: "mic-1", name: "マイク (RME Babyface Pro)", is_default: true, device_type: "recording" },
+  { id: "spk-1", name: "スピーカー (RME Babyface Pro)", is_default: true, device_type: "playback", format: { sample_rate: 48000, bits_per_sample: 24, channels: 2 }, connection: "USB" },
+  { id: "spk-2", name: "ヘッドホン (Sony WH-1000XM5)", is_default: false, device_type: "playback", format: { sample_rate: 44100, bits_per_sample: 16, channels: 2 }, connection: "Bluetooth" },
+  { id: "mic-1", name: "マイク (RME Babyface Pro)", is_default: true, device_type: "recording", format: { sample_rate: 48000, bits_per_sample: 24, channels: 2 }, connection: "USB" },
 ];
 
 mockWindows("main");

@@ -6,6 +6,88 @@ pub struct AudioDevice {
     pub name: String,
     pub is_default: bool,
     pub device_type: String, // "playback" or "recording"
+    /// Shared-mode format the device runs at (what every app's audio is
+    /// resampled to), i.e. the "Default Format" in Windows sound settings.
+    #[serde(default)]
+    pub format: Option<AudioFormat>,
+    /// How the device is attached: "Bluetooth", "USB", "HDMI/DP", "S/PDIF", "Built-in"
+    #[serde(default)]
+    pub connection: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioFormat {
+    pub sample_rate: u32,
+    /// Valid bits (e.g. 24 for 24-in-32 containers)
+    pub bits_per_sample: u16,
+    pub channels: u16,
+}
+
+const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+
+/// Parses a WAVEFORMATEX / WAVEFORMATEXTENSIBLE blob (as stored in
+/// PKEY_AudioEngine_DeviceFormat). Little-endian layout:
+///   0 wFormatTag u16, 2 nChannels u16, 4 nSamplesPerSec u32,
+///   14 wBitsPerSample u16, 16 cbSize u16, 18 wValidBitsPerSample u16 (EXTENSIBLE)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_wave_format(blob: &[u8]) -> Option<AudioFormat> {
+    let u16_at = |off: usize| blob.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |off: usize| {
+        blob.get(off..off + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+
+    let tag = u16_at(0)?;
+    let channels = u16_at(2)?;
+    let sample_rate = u32_at(4)?;
+    let container_bits = u16_at(14)?;
+    if channels == 0 || sample_rate == 0 || container_bits == 0 {
+        return None;
+    }
+
+    let valid_bits = if tag == WAVE_FORMAT_EXTENSIBLE && u16_at(16).unwrap_or(0) >= 22 {
+        u16_at(18).filter(|&v| v > 0 && v <= container_bits)
+    } else {
+        None
+    };
+
+    Some(AudioFormat {
+        sample_rate,
+        bits_per_sample: valid_bits.unwrap_or(container_bits),
+        channels,
+    })
+}
+
+// EndpointFormFactor values (mmdeviceapi.h)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const FORM_FACTOR_SPDIF: i32 = 8;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const FORM_FACTOR_DIGITAL_DISPLAY: i32 = 9;
+
+/// Classifies the connection from the endpoint form factor and the device
+/// id of the adapter its topology connects to (e.g. `{2}.\\?\usb#vid_...`).
+/// Form factor wins for display / S/PDIF outputs, which live on onboard or
+/// GPU HD Audio controllers that would otherwise look "Built-in".
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn classify_connection(form_factor: Option<i32>, adapter_id: Option<&str>) -> Option<&'static str> {
+    match form_factor {
+        // DigitalAudioDisplayDevice covers both HDMI and DisplayPort
+        Some(FORM_FACTOR_DIGITAL_DISPLAY) => return Some("HDMI/DP"),
+        Some(FORM_FACTOR_SPDIF) => return Some("S/PDIF"),
+        _ => {}
+    }
+    let id = adapter_id?.to_ascii_lowercase();
+    if id.contains("bthenum") || id.contains("bthhfenum") || id.contains("bthleenum") {
+        Some("Bluetooth")
+    } else if id.contains("usb") {
+        Some("USB")
+    } else if id.contains("hdaudio") || id.contains("acpi") {
+        // Not "intelaudio": Intel SST also routes Bluetooth headsets through
+        // it, so it can't tell built-in from external — show nothing instead
+        Some("Built-in")
+    } else {
+        None
+    }
 }
 
 // ============================================================
@@ -161,6 +243,8 @@ mod platform {
                         name: name.clone(),
                         is_default: dev_id == default_output_id,
                         device_type: "playback".to_string(),
+                        format: None,
+                        connection: None,
                     });
                 }
 
@@ -170,6 +254,8 @@ mod platform {
                         name,
                         is_default: dev_id == default_input_id,
                         device_type: "recording".to_string(),
+                        format: None,
+                        connection: None,
                     });
                 }
             }
@@ -228,7 +314,7 @@ mod platform {
     // (trait, vtable struct, wrappers), so silence the lint module-wide.
     #![allow(non_snake_case)]
 
-    use super::AudioDevice;
+    use super::{classify_connection, parse_wave_format, AudioDevice, AudioFormat};
     use windows::core::{GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
     use windows::Win32::Foundation::PROPERTYKEY;
@@ -324,13 +410,17 @@ mod platform {
                     Err(_) => continue,
                 };
 
-                let name = match device.OpenPropertyStore(STGM_READ) {
-                    Ok(store) => match store.GetValue(&PKEY_Device_FriendlyName) {
-                        Ok(prop) => prop.to_string().trim().to_string(),
-                        Err(_) => format!("Audio Device {}", i),
-                    },
-                    Err(_) => format!("Audio Device {}", i),
-                };
+                let store = device.OpenPropertyStore(STGM_READ).ok();
+                let name = store
+                    .as_ref()
+                    .and_then(|s| s.GetValue(&PKEY_Device_FriendlyName).ok())
+                    .map(|prop| prop.to_string().trim().to_string())
+                    .unwrap_or_else(|| format!("Audio Device {}", i));
+                let format = store.as_ref().and_then(|s| read_device_format(s));
+                let form_factor = store.as_ref().and_then(|s| read_form_factor(s));
+                let adapter_id = adapter_device_id(&device);
+                let connection = classify_connection(form_factor, adapter_id.as_deref())
+                    .map(str::to_string);
 
                 let is_default = default_id.as_ref().map(|did| *did == id).unwrap_or(false);
 
@@ -339,11 +429,52 @@ mod platform {
                     name,
                     is_default,
                     device_type: device_type_str.to_string(),
+                    format,
+                    connection,
                 });
             }
 
             devices
         }
+    }
+
+    // VT_BLOB / VT_UI4 (wtypes.h)
+    const VT_BLOB: u16 = 65;
+    const VT_UI4: u16 = 19;
+
+    unsafe fn read_device_format(
+        store: &windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore,
+    ) -> Option<AudioFormat> {
+        let prop = store.GetValue(&PKEY_AudioEngine_DeviceFormat).ok()?;
+        let inner = &prop.Anonymous.Anonymous;
+        if inner.vt.0 != VT_BLOB {
+            return None;
+        }
+        let blob = inner.Anonymous.blob;
+        if blob.pBlobData.is_null() || blob.cbSize == 0 {
+            return None;
+        }
+        let bytes = std::slice::from_raw_parts(blob.pBlobData, blob.cbSize as usize);
+        parse_wave_format(bytes)
+    }
+
+    unsafe fn read_form_factor(
+        store: &windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore,
+    ) -> Option<i32> {
+        let prop = store.GetValue(&PKEY_AudioEndpoint_FormFactor).ok()?;
+        let inner = &prop.Anonymous.Anonymous;
+        (inner.vt.0 == VT_UI4).then(|| inner.Anonymous.ulVal as i32)
+    }
+
+    /// Device id of the adapter (USB / Bluetooth / HD Audio controller) the
+    /// endpoint's first topology connector is wired to.
+    unsafe fn adapter_device_id(device: &IMMDevice) -> Option<String> {
+        let topology: IDeviceTopology = device.Activate(CLSCTX_ALL, None).ok()?;
+        let connector = topology.GetConnector(0).ok()?;
+        let raw = connector.GetDeviceIdConnectedTo().ok()?;
+        let id = raw.to_string().ok();
+        CoTaskMemFree(Some(raw.0 as *const _));
+        id
     }
 
     pub fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
@@ -422,3 +553,77 @@ mod platform {
 }
 
 pub use platform::{get_audio_devices, set_default_audio_device};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wave_format_ex(tag: u16, channels: u16, rate: u32, bits: u16, cb_size: u16) -> Vec<u8> {
+        let block_align = channels * bits / 8;
+        let mut b = Vec::new();
+        b.extend_from_slice(&tag.to_le_bytes());
+        b.extend_from_slice(&channels.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * block_align as u32).to_le_bytes());
+        b.extend_from_slice(&block_align.to_le_bytes());
+        b.extend_from_slice(&bits.to_le_bytes());
+        b.extend_from_slice(&cb_size.to_le_bytes());
+        b
+    }
+
+    fn extensible(channels: u16, rate: u32, container: u16, valid: u16) -> Vec<u8> {
+        let mut b = wave_format_ex(WAVE_FORMAT_EXTENSIBLE, channels, rate, container, 22);
+        b.extend_from_slice(&valid.to_le_bytes()); // Samples.wValidBitsPerSample
+        b.extend_from_slice(&3u32.to_le_bytes()); // dwChannelMask
+        b.extend_from_slice(&[0u8; 16]); // SubFormat GUID
+        b
+    }
+
+    #[test]
+    fn parses_plain_pcm() {
+        let f = parse_wave_format(&wave_format_ex(1, 2, 44_100, 16, 0)).unwrap();
+        assert_eq!(f, AudioFormat { sample_rate: 44_100, bits_per_sample: 16, channels: 2 });
+    }
+
+    #[test]
+    fn extensible_reports_valid_bits_not_container() {
+        let f = parse_wave_format(&extensible(2, 48_000, 32, 24)).unwrap();
+        assert_eq!(f, AudioFormat { sample_rate: 48_000, bits_per_sample: 24, channels: 2 });
+    }
+
+    #[test]
+    fn extensible_with_bogus_valid_bits_falls_back_to_container() {
+        let f = parse_wave_format(&extensible(8, 96_000, 24, 0)).unwrap();
+        assert_eq!(f.bits_per_sample, 24);
+        assert_eq!(f.channels, 8);
+    }
+
+    #[test]
+    fn truncated_or_empty_blob_is_rejected() {
+        assert_eq!(parse_wave_format(&[]), None);
+        assert_eq!(parse_wave_format(&wave_format_ex(1, 2, 48_000, 16, 0)[..10]), None);
+        assert_eq!(parse_wave_format(&wave_format_ex(1, 0, 48_000, 16, 0)), None);
+    }
+
+    #[test]
+    fn classifies_connections() {
+        let bt = r"{2}.\\?\bthenum#{0000110b-0000-1000-8000-00805f9b34fb}_vid&0001";
+        let usb = r"{2}.\\?\usb#vid_2a39&pid_3fd3&mi_00#7&1";
+        let hda = r"{2}.\\?\hdaudio#func_01&ven_10ec&dev_0897";
+        assert_eq!(classify_connection(Some(1), Some(bt)), Some("Bluetooth"));
+        assert_eq!(classify_connection(Some(1), Some(usb)), Some("USB"));
+        assert_eq!(classify_connection(Some(1), Some(hda)), Some("Built-in"));
+        assert_eq!(classify_connection(Some(1), Some("{2}.something-else")), None);
+        // Intel SST hosts both onboard codecs and BT headsets: undecidable
+        assert_eq!(classify_connection(Some(5), Some(r"{2}.\\?\intelaudio#subsys_1")), None);
+        assert_eq!(classify_connection(Some(1), None), None);
+    }
+
+    #[test]
+    fn form_factor_overrides_adapter_bus() {
+        // GPU HDMI audio sits on an HD Audio controller
+        let hda = r"{2}.\\?\hdaudio#func_01&ven_10de&dev_009a";
+        assert_eq!(classify_connection(Some(FORM_FACTOR_DIGITAL_DISPLAY), Some(hda)), Some("HDMI/DP"));
+        assert_eq!(classify_connection(Some(FORM_FACTOR_SPDIF), None), Some("S/PDIF"));
+    }
+}

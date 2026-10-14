@@ -500,6 +500,40 @@
   color: var(--hud-primary);
 }
 
+.audio-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+/* Label sits in the header row now; drop its own spacing */
+.audio-subsection-header .audio-subsection-label {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.audio-device-spec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  font-size: 9px;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--hud-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.audio-connection {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--hud-card);
+  letter-spacing: 0.5px;
+}
+
 .audio-switching-indicator {
   color: var(--hud-accent);
   font-size: 14px;

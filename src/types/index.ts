@@ -115,11 +115,21 @@ export const SECTION_TYPES = ["cpu", "gpu", "storage", "motherboard", "audio", "
 
 export type SectionType = (typeof SECTION_TYPES)[number];
 
+export interface AudioFormat {
+  sample_rate: number;
+  bits_per_sample: number;
+  channels: number;
+}
+
 export interface AudioDevice {
   id: string;
   name: string;
   is_default: boolean;
   device_type: "playback" | "recording";
+  /** Shared-mode device format (Windows only) */
+  format?: AudioFormat | null;
+  /** "Bluetooth" | "USB" | "HDMI/DP" | "S/PDIF" | "Built-in" (Windows only) */
+  connection?: string | null;
 }
 
 export interface PawnIOStatus {

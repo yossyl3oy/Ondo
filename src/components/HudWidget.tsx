@@ -13,6 +13,14 @@ import "./HudWidget.css";
 
 const DRAG_THRESHOLD = 5;
 
+// "48kHz · 24bit · 2ch", or null when the device format is unknown
+function formatAudioSpec(device: AudioDevice | undefined): string | null {
+  const f = device?.format;
+  if (!f) return null;
+  const khz = Number((f.sample_rate / 1000).toFixed(2));
+  return `${khz}kHz · ${f.bits_per_sample}bit · ${f.channels}ch`;
+}
+
 // Module-level formatter: creating an Intl.DateTimeFormat on every render
 // (which toLocaleTimeString with options does) is comparatively expensive.
 const TIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
@@ -682,9 +690,20 @@ export function HudWidget({
     label: string,
   ) => {
     const defaultDevice = devices.find((d) => d.is_default);
+    const spec = formatAudioSpec(defaultDevice);
     return (
       <div className="audio-subsection">
-        <span className="audio-subsection-label">{label}</span>
+        <div className="audio-subsection-header">
+          <span className="audio-subsection-label">{label}</span>
+          {(spec || defaultDevice?.connection) && (
+            <div className="audio-device-spec">
+              {spec && <span>{spec}</span>}
+              {defaultDevice?.connection && (
+                <span className="audio-connection">{defaultDevice.connection}</span>
+              )}
+            </div>
+          )}
+        </div>
         <div className="audio-select-wrapper">
           <select
             className="audio-device-select"
