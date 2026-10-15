@@ -6,6 +6,8 @@ package-lock.json
 # Build output
 dist/
 src-tauri/target/
+# tauri-build が毎ビルド再生成する (capabilities/default.json の $schema 補完用)
+src-tauri/gen/schemas/
 
 # IDE
 .idea/
