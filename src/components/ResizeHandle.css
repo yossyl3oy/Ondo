@@ -1,0 +1,74 @@
+/* Hit zone spans the window's side padding so it never covers section
+   content (sections start 8px in) */
+.resize-handle {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 150;
+  cursor: ew-resize;
+}
+
+.resize-handle.west {
+  left: 0;
+}
+
+.resize-handle.east {
+  right: 0;
+}
+
+.resize-handle-bar {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--hud-text-secondary);
+  box-shadow: 0 0 4px var(--hud-text-halo);
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.resize-handle.west .resize-handle-bar {
+  left: 2px;
+}
+
+.resize-handle.east .resize-handle-bar {
+  right: 2px;
+}
+
+.resize-handle-label {
+  position: absolute;
+  top: 50%;
+  padding: 3px 7px;
+  border: 1px solid var(--hud-divider);
+  border-radius: 4px;
+  background: var(--hud-surface);
+  color: var(--hud-text);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
+  opacity: 0;
+  /* Tooltip waits a beat so brushing past the edge only shows the bar */
+  transition: opacity 0.15s ease;
+}
+
+.resize-handle.west .resize-handle-label {
+  left: 12px;
+}
+
+.resize-handle.east .resize-handle-label {
+  right: 12px;
+}
+
+.resize-handle:hover .resize-handle-bar {
+  opacity: 0.8;
+}
+
+.resize-handle:hover .resize-handle-label {
+  opacity: 1;
+  transition-delay: 0.4s;
+}

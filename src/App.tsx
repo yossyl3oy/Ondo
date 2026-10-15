@@ -8,6 +8,7 @@ import { BootSequence } from "./components/BootSequence";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { RestorePanel } from "./components/RestorePanel";
+import { ResizeHandle } from "./components/ResizeHandle";
 import { useHardwareData } from "./hooks/useHardwareData";
 import { useSettings } from "./hooks/useSettings";
 import { useUpdater } from "./hooks/useUpdater";
@@ -370,6 +371,7 @@ function App() {
           : 1,
       } as CSSProperties}
     >
+      {!miniMode && <ResizeHandle position={settings.position} />}
       <HudWidget
         hardwareData={hardwareData}
         isLoading={isLoading}
