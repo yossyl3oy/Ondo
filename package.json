@@ -1,6 +1,6 @@
 {
   "name": "ondo",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "HUD-style hardware temperature monitoring widget",
   "license": "MIT",
   "type": "module",
