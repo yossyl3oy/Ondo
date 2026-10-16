@@ -105,6 +105,9 @@ mockIPC((cmd, payload) => {
       (window as unknown as { __fitHeight: unknown }).__fitHeight = height;
       return undefined;
     }
+    case "wait_cursor_leaves_edge":
+      // No real cursor tracking in the browser: pretend it left after 1.5s
+      return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
     case "plugin:updater|check":
       return { rid: 1, available: true, currentVersion: "0.1.26", version: "0.1.27" };
     default:

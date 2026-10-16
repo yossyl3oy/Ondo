@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -159,6 +159,99 @@ pub fn start_monitoring(app: AppHandle) {
             }
         }
     });
+}
+
+// ── Resize border hover ─────────────────────────────────────────────────────
+
+/// Width of the band (CSS px) along a vertical window edge that counts as
+/// the resize border. Covers the OS sizing frame Tauri hit-tests for
+/// undecorated windows (SM_CXFRAME, ~4px at 100%).
+const RESIZE_BAND_CSS: f64 = 8.0;
+/// Approximate OS sizing border (SM_CXFRAME at 96 DPI) in CSS px. Along the
+/// top / bottom border Tauri's hit test answers HTTOP / HTBOTTOM except in
+/// the corners, and the height is locked, so only the corners resize there.
+const OS_BORDER_CSS: f64 = 4.0;
+const EDGE_POLL_MS: u64 = 50;
+/// Each wait gives up after this long; the frontend re-arms if needed
+const EDGE_WAIT_LIMIT_MS: u64 = 30_000;
+
+/// Generation per edge (West, East): a new wait supersedes the previous
+/// one, so pointer jitter at the boundary can't stack pollers.
+static EDGE_WAIT_GEN: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+
+/// Whether a drag at the cursor would resize the window's width from the
+/// given vertical edge. Coordinates are physical screen px; `band` is the
+/// side band width and `os_border` the native top/bottom border height.
+fn cursor_on_edge(
+    cursor: (i32, i32),
+    window_pos: (i32, i32),
+    window_size: (u32, u32),
+    east: bool,
+    band: i32,
+    os_border: i32,
+) -> bool {
+    let (cx, cy) = (i64::from(cursor.0), i64::from(cursor.1));
+    let (left, top) = (i64::from(window_pos.0), i64::from(window_pos.1));
+    let right = left + i64::from(window_size.0);
+    let bottom = top + i64::from(window_size.1);
+    let band = i64::from(band.max(1));
+    let os_border = i64::from(os_border.max(1)).min(band);
+    if cy < top || cy >= bottom {
+        return false;
+    }
+    // Distance from the edge being resized
+    let inset = if east { right - 1 - cx } else { cx - left };
+    if inset < 0 || inset >= band {
+        return false;
+    }
+    let in_top_or_bottom_border = cy < top + os_border || cy >= bottom - os_border;
+    // There only the corner (inside the native side border) still resizes width
+    !in_top_or_bottom_border || inset < os_border
+}
+
+/// Waits until the cursor leaves the width-resize band of `edge` ("West" /
+/// "East"). Over the OS sizing border the webview gets no pointer events,
+/// so the frontend keeps its resize hint up until this returns. Returns
+/// `true` when the cursor left, `false` when the wait timed out or was
+/// superseded by a newer one for the same edge.
+#[tauri::command]
+pub async fn wait_cursor_leaves_edge(app: AppHandle, edge: String) -> Result<bool, String> {
+    let east = edge == "East";
+    let gen = &EDGE_WAIT_GEN[usize::from(east)];
+    let my_gen = gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut waited = 0;
+    while waited < EDGE_WAIT_LIMIT_MS {
+        if gen.load(Ordering::SeqCst) != my_gen {
+            return Ok(false);
+        }
+        let Some(window) = app.get_webview_window("main") else {
+            return Ok(true);
+        };
+        let (Ok(pos), Ok(size), Ok(scale), Some(cursor)) = (
+            window.outer_position(),
+            window.outer_size(),
+            window.scale_factor(),
+            get_cursor_position(),
+        ) else {
+            return Ok(true);
+        };
+        let band = (RESIZE_BAND_CSS * scale).ceil() as i32;
+        let os_border = (OS_BORDER_CSS * scale).ceil() as i32;
+        let on_edge = cursor_on_edge(
+            cursor,
+            (pos.x, pos.y),
+            (size.width, size.height),
+            east,
+            band,
+            os_border,
+        );
+        if !on_edge {
+            return Ok(true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(EDGE_POLL_MS)).await;
+        waited += EDGE_POLL_MS;
+    }
+    Ok(false)
 }
 
 // ── Cursor proximity detection ──────────────────────────────────────────────
@@ -601,6 +694,49 @@ mod tests {
     #[test]
     fn empty_zones_never_match() {
         assert!(!point_in_zones(0.0, 0.0, &[]));
+    }
+
+    // Window at (100, 50), 300x600, band 8px, native border 4px
+    const POS: (i32, i32) = (100, 50);
+    const SIZE: (u32, u32) = (300, 600);
+
+    fn on(x: i32, y: i32, east: bool) -> bool {
+        cursor_on_edge((x, y), POS, SIZE, east, 8, 4)
+    }
+
+    #[test]
+    fn west_band_is_left_edge_inside_window() {
+        assert!(on(100, 300, false));
+        assert!(on(107, 300, false));
+        assert!(!on(108, 300, false)); // moved inward
+        assert!(!on(99, 300, false)); // left the window
+    }
+
+    #[test]
+    fn east_band_is_right_edge_inside_window() {
+        assert!(on(399, 300, true));
+        assert!(on(392, 300, true));
+        assert!(!on(391, 300, true));
+        assert!(!on(400, 300, true));
+    }
+
+    #[test]
+    fn band_requires_vertical_overlap() {
+        assert!(!on(102, 49, false));
+        assert!(!on(102, 650, false));
+        assert!(on(102, 645, false));
+    }
+
+    #[test]
+    fn top_and_bottom_borders_only_count_in_the_corner() {
+        // 6px in from the left but on the top border: native HTTOP, height is
+        // locked, so a drag there would do nothing
+        assert!(!on(106, 52, false));
+        assert!(!on(106, 648, false));
+        assert!(!on(393, 52, true));
+        // Corner (inside the side border too) still resizes the width
+        assert!(on(102, 52, false));
+        assert!(on(397, 648, true));
     }
 }
 

@@ -64,11 +64,11 @@
   right: 12px;
 }
 
-.resize-handle:hover .resize-handle-bar {
+.resize-handle.visible .resize-handle-bar {
   opacity: 0.8;
 }
 
-.resize-handle:hover .resize-handle-label {
+.resize-handle.visible .resize-handle-label {
   opacity: 1;
   transition-delay: 0.4s;
 }

@@ -707,7 +707,9 @@ async fn fit_window_height(
         .unwrap_or_default();
     let (_, vertical) = position_anchors(&position);
 
-    let wanted = (css_height * scale).round().max(1.0) as u32;
+    // Round up: at fractional scales rounding to nearest can land a hair
+    // short of the content and flash a scrollbar on every value update
+    let wanted = (css_height * scale).ceil().max(1.0) as u32;
     let (y, h) = fitted_vertical_span(
         pos.y,
         size.height,
@@ -843,6 +845,7 @@ fn main() {
             get_window_state,
             restore_window_state,
             window_monitor::set_mini_interactive_zones,
+            window_monitor::wait_cursor_leaves_edge,
             check_pawnio_status,
             download_and_install_pawnio,
             get_audio_devices,

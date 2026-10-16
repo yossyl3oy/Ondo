@@ -371,7 +371,7 @@ function App() {
           : 1,
       } as CSSProperties}
     >
-      {!miniMode && <ResizeHandle position={settings.position} />}
+      {!miniMode && <ResizeHandle />}
       <HudWidget
         hardwareData={hardwareData}
         isLoading={isLoading}

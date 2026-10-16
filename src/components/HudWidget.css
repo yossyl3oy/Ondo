@@ -113,6 +113,16 @@
   overflow: visible;
 }
 
+/* Only needed when the HUD is taller than the screen; keep it out of
+   sight until the pointer is over the list */
+.hud-content::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.hud-content:hover::-webkit-scrollbar-thumb {
+  background: var(--hud-border);
+}
+
 /* Natural-height wrapper (App sizes the window to it). flow-root keeps the
    last section's bottom margin inside instead of collapsing through */
 .hud-sections {
