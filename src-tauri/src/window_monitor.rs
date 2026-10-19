@@ -74,21 +74,66 @@ fn is_cursor_in_interactive_zone(app: &AppHandle) -> bool {
     point_in_zones(rel_x, rel_y, &zones)
 }
 
+/// How long a maximized window must persist before mini mode kicks in.
+/// Alt-tabbing past a maximized app or a game's launch splash can maximize
+/// something for a fraction of a second; entering and leaving mini mode that
+/// fast raced the frontend's resize steps and left the window mini-sized.
+const MINI_ENTER_DELAY_MS: u64 = 2_000;
+
+/// Debounces the raw "something is maximized" signal: entering mini mode
+/// needs the signal to hold for `enter_delay_ms`, leaving is immediate (the
+/// user is looking at the desktop again and wants the full HUD back).
+struct MiniModeDebouncer {
+    active: bool,
+    /// When the raw signal first turned true while inactive
+    pending_since: Option<u64>,
+    enter_delay_ms: u64,
+}
+
+impl MiniModeDebouncer {
+    fn new(active: bool, enter_delay_ms: u64) -> Self {
+        Self {
+            active,
+            pending_since: None,
+            enter_delay_ms,
+        }
+    }
+
+    /// Feeds one observation; returns the new state when it flips.
+    fn observe(&mut self, maximized: bool, now_ms: u64) -> Option<bool> {
+        if !maximized {
+            self.pending_since = None;
+            if self.active {
+                self.active = false;
+                return Some(false);
+            }
+            return None;
+        }
+        if self.active {
+            return None;
+        }
+        let since = *self.pending_since.get_or_insert(now_ms);
+        if now_ms.saturating_sub(since) >= self.enter_delay_ms {
+            self.pending_since = None;
+            self.active = true;
+            return Some(true);
+        }
+        None
+    }
+}
+
 /// Start background monitoring for maximized/fullscreen windows on Ondo's
-/// display. Emits `"minimode-changed"` whenever the answer flips.
+/// display. Emits `"minimode-changed"` whenever the (debounced) answer flips.
 pub fn start_monitoring(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Brief delay to let the frontend set up its event listener
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        // Initial check — emit even if the initial state is "maximized"
-        let initial = is_any_maximized_on_app_display(&app);
-        LAST_STATE.store(initial, Ordering::Relaxed);
-        if initial {
-            let _ = app.emit("minimode-changed", MiniModePayload { active: true });
-            crate::log_info!("WindowMonitor", "Mini mode activated (startup)");
-        }
-
+        // Startup goes through the same debounce as everything else, so a
+        // launch splash that is maximized for a moment doesn't trigger it
+        let started = std::time::Instant::now();
+        let mut debouncer = MiniModeDebouncer::new(false, MINI_ENTER_DELAY_MS);
+        LAST_STATE.store(false, Ordering::Relaxed);
         let mut tick: u32 = 0;
         loop {
             let in_mini = LAST_STATE.load(Ordering::Relaxed);
@@ -101,10 +146,9 @@ pub fn start_monitoring(app: AppHandle) {
             let check_maximized = !in_mini || tick % 5 == 0;
 
             if check_maximized {
-                let is_maximized = is_any_maximized_on_app_display(&app);
-                let prev = LAST_STATE.load(Ordering::Relaxed);
-
-                if is_maximized != prev {
+                let now_ms = started.elapsed().as_millis() as u64;
+                let raw = is_any_maximized_on_app_display(&app);
+                if let Some(is_maximized) = debouncer.observe(raw, now_ms) {
                     LAST_STATE.store(is_maximized, Ordering::Relaxed);
                     // Reset cursor-near state when leaving mini mode
                     if !is_maximized {
@@ -725,6 +769,34 @@ mod tests {
         assert!(!on(102, 49, false));
         assert!(!on(102, 650, false));
         assert!(on(102, 645, false));
+    }
+
+    #[test]
+    fn mini_mode_waits_for_a_sustained_maximize() {
+        let mut d = MiniModeDebouncer::new(false, 2_000);
+        assert_eq!(d.observe(true, 0), None);
+        assert_eq!(d.observe(true, 1_000), None);
+        assert_eq!(d.observe(true, 2_000), Some(true));
+        assert_eq!(d.observe(true, 3_000), None); // already active
+    }
+
+    #[test]
+    fn brief_maximize_never_enters_mini_mode() {
+        let mut d = MiniModeDebouncer::new(false, 2_000);
+        assert_eq!(d.observe(true, 0), None);
+        assert_eq!(d.observe(false, 1_000), None);
+        // The timer restarts from the next maximize, not the first one
+        assert_eq!(d.observe(true, 2_000), None);
+        assert_eq!(d.observe(true, 3_000), None);
+        assert_eq!(d.observe(true, 4_000), Some(true));
+    }
+
+    #[test]
+    fn leaving_mini_mode_is_immediate() {
+        let mut d = MiniModeDebouncer::new(true, 2_000);
+        assert_eq!(d.observe(true, 0), None);
+        assert_eq!(d.observe(false, 1_000), Some(false));
+        assert_eq!(d.observe(false, 2_000), None);
     }
 
     #[test]

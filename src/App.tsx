@@ -104,65 +104,98 @@ function App() {
     };
   }, []);
 
+  // Latest settings the transition queue needs, without re-subscribing the
+  // listener (and losing queued work) whenever they change
+  const positionRef = useRef(settings.position);
+  positionRef.current = settings.position;
+  // Mini mode transitions run strictly one after another: entering awaits
+  // several IPC round-trips, and a quick exit used to run in the middle of
+  // them — it found no saved size, and the rest of the entry then shrank
+  // the window to mini size while the HUD was back in standard mode.
+  const miniTransitionRef = useRef<Promise<void>>(Promise.resolve());
+
   // Listen for minimode-changed events from window monitor
   useEffect(() => {
-    const unlisten = listen<{ active: boolean }>("minimode-changed", async (event) => {
+    // Checked before every window-changing step: if mini mode was left while
+    // this entry was in flight, stop before touching the window at all
+    const stillMini = () => miniModeRef.current;
+
+    const enterMini = async () => {
+      // A saved state means a previous entry already captured the standard
+      // size (an enter/exit/enter burst whose exit was skipped). The window
+      // may be mini-sized by now, so re-capturing would record the mini size
+      // as the one to restore; reuse it and re-apply the steps below, which
+      // are idempotent (standard mode may have re-locked the height since).
+      let currentState = savedWindowStateRef.current;
+      if (!currentState) {
+        currentState = await invoke<WindowState>("get_window_state");
+        if (!stillMini()) return;
+        savedWindowStateRef.current = currentState;
+        // Persist the pre-mini size: if the process is killed while in
+        // mini mode, the next launch must restore the standard-mode size
+        await updateSettings({ windowState: currentState });
+      }
+
+      // Drop the standard-mode height lock so the window can shrink
+      if (!stillMini()) return;
+      await queueFit(null);
+      // Make window click-through so users can interact with apps below
+      if (!stillMini()) return;
+      await getCurrentWindow().setIgnoreCursorEvents(true);
+
+      // Wait a frame for React to render mini content, then fit window to it
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (!stillMini()) return;
+      const miniEl = document.querySelector(".mini-content");
+      const cssHeight = miniEl ? miniEl.getBoundingClientRect().height + 4 : 120;
+      const dpr = window.devicePixelRatio || 1;
+      await invoke("restore_window_state", {
+        state: {
+          x: currentState.x,
+          y: currentState.y,
+          width: Math.round(180 * dpr),
+          height: Math.round(cssHeight * dpr),
+        },
+      });
+      // Reposition to settings position
+      await invoke("set_window_position", { position: positionRef.current });
+    };
+
+    const exitMini = async () => {
+      // Always give clicks back, even if the entry stopped part-way
+      await getCurrentWindow().setIgnoreCursorEvents(false);
+      // Nothing saved means the entry never got as far as shrinking
+      const saved = savedWindowStateRef.current;
+      if (!saved) return;
+      // Restore saved window size, then reposition to avoid overflow
+      await invoke("restore_window_state", { state: saved });
+      await invoke("set_window_position", { position: positionRef.current });
+      // Cleared only now: until the restore lands the window is still
+      // mini-sized, and saveWindowState must not persist that
+      savedWindowStateRef.current = null;
+    };
+
+    const unlisten = listen<{ active: boolean }>("minimode-changed", (event) => {
       const active = event.payload.active;
       miniModeRef.current = active;
       setMiniMode(active);
       if (!active) setCursorNear(false);
 
-      try {
-        if (active) {
-          // Save current window state before shrinking
-          const currentState = await invoke<WindowState>("get_window_state");
-          savedWindowStateRef.current = currentState;
-          // Persist the pre-mini size: if the process is killed while in
-          // mini mode, the next launch must restore the standard-mode size
-          await updateSettings({ windowState: currentState });
-
-          // Drop the standard-mode height lock so the window can shrink
-          await queueFit(null);
-          // Make window click-through so users can interact with apps below
-          await getCurrentWindow().setIgnoreCursorEvents(true);
-
-          // Wait a frame for React to render mini content, then fit window to it
-          requestAnimationFrame(async () => {
-            const miniEl = document.querySelector(".mini-content");
-            const cssHeight = miniEl
-              ? miniEl.getBoundingClientRect().height + 4
-              : 120;
-            const dpr = window.devicePixelRatio || 1;
-            const physicalHeight = Math.round(cssHeight * dpr);
-            const miniWidth = Math.round(180 * dpr);
-            await invoke("restore_window_state", {
-              state: {
-                x: currentState.x,
-                y: currentState.y,
-                width: miniWidth,
-                height: physicalHeight,
-              },
-            });
-            // Reposition to settings position
-            await invoke("set_window_position", { position: settings.position });
-          });
-        } else if (savedWindowStateRef.current) {
-          // Restore click interaction
-          await getCurrentWindow().setIgnoreCursorEvents(false);
-          // Restore saved window size, then reposition to avoid overflow
-          await invoke("restore_window_state", { state: savedWindowStateRef.current });
-          savedWindowStateRef.current = null;
-          await invoke("set_window_position", { position: settings.position });
-        }
-      } catch {
-        // Ignore errors during window resize
-      }
+      miniTransitionRef.current = miniTransitionRef.current
+        .then(() => {
+          // A later event already superseded this one; it will run itself
+          if (miniModeRef.current !== active) return;
+          return active ? enterMini() : exitMini();
+        })
+        .catch(() => {
+          // Ignore errors during window resize
+        });
     });
 
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [settings.position, updateSettings]);
+  }, [updateSettings, queueFit]);
 
   // Apply theme to document root
   useEffect(() => {
@@ -187,8 +220,9 @@ function App() {
 
   const saveWindowState = useCallback(async () => {
     // In mini mode the window holds the mini size — persisting it would
-    // make the next launch restore a tiny window in standard mode
-    if (miniModeRef.current) return;
+    // make the next launch restore a tiny window in standard mode. A saved
+    // pre-mini state means an exit is still pending its restore.
+    if (miniModeRef.current || savedWindowStateRef.current) return;
     try {
       const state = await invoke<WindowState>("get_window_state");
       if (state) {
