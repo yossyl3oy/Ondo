@@ -76,9 +76,10 @@ fn is_cursor_in_interactive_zone(app: &AppHandle) -> bool {
 
 /// How long a maximized window must persist before mini mode kicks in.
 /// Alt-tabbing past a maximized app or a game's launch splash can maximize
-/// something for a fraction of a second; entering and leaving mini mode that
-/// fast raced the frontend's resize steps and left the window mini-sized.
-const MINI_ENTER_DELAY_MS: u64 = 2_000;
+/// something for a fraction of a second (0.2s seen in logs); without this
+/// the HUD would flash into mini mode and straight back. Kept short so a
+/// real fullscreen app still switches to mini mode almost immediately.
+const MINI_ENTER_DELAY_MS: u64 = 500;
 
 /// Debounces the raw "something is maximized" signal: entering mini mode
 /// needs the signal to hold for `enter_delay_ms`, leaving is immediate (the
@@ -134,18 +135,15 @@ pub fn start_monitoring(app: AppHandle) {
         let started = std::time::Instant::now();
         let mut debouncer = MiniModeDebouncer::new(false, MINI_ENTER_DELAY_MS);
         LAST_STATE.store(false, Ordering::Relaxed);
-        let mut tick: u32 = 0;
         loop {
             let in_mini = LAST_STATE.load(Ordering::Relaxed);
-            // In mini mode: poll every 200ms. Otherwise: every 1s.
-            let interval = if in_mini { 200 } else { 1000 };
+            // Mini mode also tracks cursor proximity, so it polls a bit faster.
+            // One maximized-window scan is well under a millisecond, and a
+            // short interval is what makes entering / leaving feel immediate.
+            let interval = if in_mini { 200 } else { 250 };
             tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
 
-            // Re-check display occupancy every 1s (every 5th tick in mini mode)
-            tick = tick.wrapping_add(1);
-            let check_maximized = !in_mini || tick % 5 == 0;
-
-            if check_maximized {
+            {
                 let now_ms = started.elapsed().as_millis() as u64;
                 let raw = is_any_maximized_on_app_display(&app);
                 if let Some(is_maximized) = debouncer.observe(raw, now_ms) {
