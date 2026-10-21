@@ -129,20 +129,12 @@ class Program
                 Environment.Exit(0);
             });
 
+            var tick = 0;
             while (true)
             {
                 try
                 {
-                    // Explicitly update all hardware and sub-hardware
-                    foreach (var hardware in _computer.Hardware)
-                    {
-                        hardware.Update();
-                        foreach (var subHardware in hardware.SubHardware)
-                        {
-                            subHardware.Update();
-                        }
-                    }
-
+                    UpdateShownHardware(_computer, _visitor, tick++);
                     var data = ExtractData(_computer);
                     OutputJson(data);
                 }
@@ -161,39 +153,78 @@ class Program
         }
     }
 
+    // Storage temperature / usage moves slowly and its SMART reads are among
+    // the costlier updates, so refresh it every few daemon ticks only.
+    const int StorageUpdateEveryTicks = 5;
+
+    /// Updates (recursively, incl. sub-hardware) only what ExtractData
+    /// reports: the CPU, the first GPU, the motherboard and the drives.
+    /// Updating every enabled device each second burned CPU on sensors
+    /// nobody displayed (e.g. an integrated GPU next to the discrete one).
+    static void UpdateShownHardware(Computer computer, UpdateVisitor visitor, int tick)
+    {
+        var gpuSeen = false;
+        foreach (var hardware in computer.Hardware)
+        {
+            switch (hardware.HardwareType)
+            {
+                case HardwareType.Cpu:
+                case HardwareType.Motherboard:
+                    break;
+                case HardwareType.GpuNvidia:
+                case HardwareType.GpuAmd:
+                case HardwareType.GpuIntel:
+                    // Same "first GPU wins" rule as ExtractData
+                    if (gpuSeen) continue;
+                    gpuSeen = true;
+                    break;
+                case HardwareType.Storage:
+                    if (tick % StorageUpdateEveryTicks != 0) continue;
+                    break;
+                default:
+                    continue;
+            }
+            hardware.Accept(visitor);
+        }
+    }
+
     static Computer CreateComputer()
     {
+        // Memory and controllers (AIO / fan hubs) aren't shown, so their
+        // devices aren't opened at all
         return new Computer
         {
             IsCpuEnabled = true,
             IsGpuEnabled = true,
-            IsMemoryEnabled = true,
             IsMotherboardEnabled = true,
             IsStorageEnabled = true,
-            IsControllerEnabled = true
         };
     }
 
+    // Reused: building JsonSerializerOptions per call rebuilds the
+    // serializer metadata cache every second (CPU + garbage).
+    static readonly JsonSerializerOptions DataJsonOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    static readonly JsonSerializerOptions ErrorJsonOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
+
     static void OutputJson(HardwareData data)
     {
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-        Console.WriteLine(JsonSerializer.Serialize(data, options));
+        Console.WriteLine(JsonSerializer.Serialize(data, DataJsonOptions));
     }
 
     static void OutputError(string message)
     {
         var error = new { error = message };
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-        };
-        Console.WriteLine(JsonSerializer.Serialize(error, options));
+        Console.WriteLine(JsonSerializer.Serialize(error, ErrorJsonOptions));
     }
 
     static HardwareData ExtractData(Computer computer)
@@ -427,16 +458,15 @@ class Program
         // Check main hardware sensors first
         ProcessSensors(hardware);
 
-        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware like SuperIO chips)
+        // Check sub-hardware for sensors (motherboard sensors are usually in sub-hardware like SuperIO chips).
+        // Already updated by the caller's visitor; reading only here.
         foreach (var subHardware in hardware.SubHardware)
         {
-            subHardware.Update();
             ProcessSensors(subHardware);
 
             // Also check nested sub-hardware
             foreach (var nestedSub in subHardware.SubHardware)
             {
-                nestedSub.Update();
                 ProcessSensors(nestedSub);
             }
         }
@@ -500,7 +530,6 @@ class Program
         // Also check sub-hardware (some drives have sensors in sub-hardware)
         foreach (var subHardware in hardware.SubHardware)
         {
-            subHardware.Update();
             ExtractSensors(subHardware);
         }
 

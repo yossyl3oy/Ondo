@@ -14,7 +14,17 @@
     <!-- Use ReadyToRun for faster startup instead of trimming -->
     <PublishReadyToRun>true</PublishReadyToRun>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Long-running daemon that allocates little: favour a small working set
+         over GC throughput. No background GC thread, no PGO instrumentation. -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compact more eagerly instead of growing the heap (0-9, higher = leaner) -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Use prerelease NuGet package with PawnIO support (replaces WinRing0 blocked by Windows Defender) -->

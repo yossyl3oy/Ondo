@@ -639,21 +639,22 @@ fn get_lhm_data() -> Option<LhmResponse> {
         }
     }
 
-    // Read all available lines and keep the latest one
-    let mut latest_line = None;
+    // Read all available lines and keep the latest one. Two buffers swapped
+    // in place: no per-line allocation or copy on this once-a-second path.
+    let mut line = String::new();
+    let mut latest = String::new();
     loop {
         // Check if there's data available before attempting to read
         if !pipe_has_data(&daemon.reader) {
             break;
         }
 
-        let mut line = String::new();
+        line.clear();
         match daemon.reader.read_line(&mut line) {
             Ok(0) => break, // EOF
             Ok(_) => {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    latest_line = Some(trimmed.to_string());
+                if !line.trim().is_empty() {
+                    std::mem::swap(&mut line, &mut latest);
                 }
             }
             Err(e) => {
@@ -664,19 +665,16 @@ fn get_lhm_data() -> Option<LhmResponse> {
     }
 
     // Parse the latest line if available
-    if let Some(line) = latest_line {
-        match serde_json::from_str::<LhmResponse>(&line) {
-            Ok(data) => {
-                daemon.latest_data = Some(data.clone());
-                return Some(data);
-            }
+    if !latest.is_empty() {
+        match serde_json::from_str::<LhmResponse>(latest.trim()) {
+            Ok(data) => daemon.latest_data = Some(data),
             Err(e) => {
                 crate::log_warn!("Hardware", "Failed to parse LHM JSON: {}", e);
             }
         }
     }
 
-    // Return cached data if no new data available
+    // Newest parsed data (or the cached copy if nothing new arrived)
     daemon.latest_data.clone()
 }
 
@@ -699,6 +697,13 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
 
     let mut child = Command::new(&lhm_path)
         .args(["--daemon", "1000"]) // 1 second interval
+        // Keep the GC's gen0 budget between 4 and 8 MiB (values are hex). By
+        // default it scales with the CPU's L3 cache — tens of MB on desktop
+        // CPUs — which the daemon's tiny per-second allocations just let pile
+        // up as resident memory between collections. GCgen0size only sets
+        // the minimum; GCGen0MaxBudget is what caps it.
+        .env("DOTNET_GCgen0size", "400000")
+        .env("DOTNET_GCGen0MaxBudget", "800000")
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -93,6 +93,16 @@ fn record_present(times: &mut VecDeque<i64>, ts: i64, freq: i64) {
     }
 }
 
+/// No present within STALE_SECS of `now` (or no history at all).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_stale(times: &VecDeque<i64>, now: i64, freq: i64) -> bool {
+    times
+        .iter()
+        .copied()
+        .max()
+        .is_none_or(|newest| now - newest > STALE_SECS * freq)
+}
+
 /// Average FPS over the last WINDOW_SECS of presents, from the frame
 /// intervals themselves: (frames - 1) / (newest - oldest). `now` is only
 /// used to detect that presenting has stopped.
@@ -351,9 +361,12 @@ unsafe extern "system" fn event_record_callback(record: *mut EVENT_RECORD) {
 fn get_fps_for_pid(pid: u32) -> Option<u32> {
     let freq = qpc_frequency()?;
     let now = qpc_now()?;
-    let guard = FRAME_TIMES.lock().ok()?;
-    let times = guard.as_ref()?.get(&pid)?;
-    fps_from_timestamps(times, now, freq)
+    let mut guard = FRAME_TIMES.lock().ok()?;
+    let map = guard.as_mut()?;
+    // Every process that ever presented gets an entry; drop the ones that
+    // went quiet so the map doesn't grow for the life of the app
+    map.retain(|_, times| !is_stale(times, now, freq));
+    fps_from_timestamps(map.get(&pid)?, now, freq)
 }
 
 #[cfg(target_os = "windows")]
@@ -492,6 +505,15 @@ mod tests {
         let times = frames(60, 2, 0);
         let newest = *times.back().unwrap();
         assert_eq!(fps_from_timestamps(&times, newest + 3 * FREQ, FREQ), None);
+    }
+
+    #[test]
+    fn quiet_processes_are_stale() {
+        let times = frames(60, 1, 0);
+        let newest = *times.back().unwrap();
+        assert!(!is_stale(&times, newest + FREQ, FREQ));
+        assert!(is_stale(&times, newest + 3 * FREQ, FREQ));
+        assert!(is_stale(&VecDeque::new(), 0, FREQ));
     }
 
     #[test]
