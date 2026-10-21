@@ -45,7 +45,8 @@
 .update-icon {
   color: var(--hud-accent);
   font-size: 12px;
-  animation: bounce 1s ease-in-out infinite;
+  /* A few bounces to draw the eye, then rest (no endless repaint) */
+  animation: bounce 1s ease-in-out 3;
 }
 
 @keyframes bounce {

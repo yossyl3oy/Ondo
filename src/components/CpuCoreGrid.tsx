@@ -1,4 +1,5 @@
 import "./CpuCoreGrid.css";
+import { fillStyle } from "../barFill";
 
 interface CoreData {
   index: number;
@@ -36,10 +37,9 @@ export function CpuCoreGrid({ cores, maxTemp, temperatureUnit = "celsius" }: Cpu
             <div className="core-temp-bar">
               <div
                 className="core-temp-fill"
-                style={{
-                  width: `${(core.temperature / maxTemp) * 100}%`,
+                style={fillStyle((core.temperature / maxTemp) * 100, {
                   backgroundColor: getTemperatureColor(core.temperature),
-                }}
+                })}
               />
             </div>
             <span

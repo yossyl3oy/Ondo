@@ -17,7 +17,6 @@
 
 .gauge-value-arc {
   stroke: var(--hud-primary);
-  filter: drop-shadow(0 0 3px var(--hud-glow));
   transition: stroke 0.3s ease;
 }
 
@@ -27,34 +26,14 @@
 
 .temp-gauge.warning .gauge-value-arc {
   stroke: var(--hud-warning);
+  /* Static glow: an endless flash kept the transparent window repainting
+     at 60fps for as long as the part stayed hot */
   filter: drop-shadow(0 0 5px var(--hud-warning));
-  animation: warningFlash 1s ease-in-out infinite;
 }
 
 .temp-gauge.danger .gauge-value-arc {
   stroke: var(--hud-danger);
   filter: drop-shadow(0 0 8px var(--hud-danger));
-  animation: dangerFlash 0.5s ease-in-out infinite;
-}
-
-@keyframes warningFlash {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-@keyframes dangerFlash {
-  0%, 100% {
-    opacity: 1;
-    filter: drop-shadow(0 0 8px var(--hud-danger));
-  }
-  50% {
-    opacity: 0.8;
-    filter: drop-shadow(0 0 15px var(--hud-danger));
-  }
 }
 
 .gauge-content {

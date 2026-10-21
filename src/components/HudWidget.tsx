@@ -9,6 +9,7 @@ const SHOW_CORES_KEY = "ondo_show_cpu_cores";
 import { TemperatureGauge } from "./TemperatureGauge";
 import { CpuCoreGrid } from "./CpuCoreGrid";
 import { NetworkGraph } from "./NetworkGraph";
+import { fillStyle } from "../barFill";
 import "./HudWidget.css";
 
 const DRAG_THRESHOLD = 5;
@@ -378,7 +379,7 @@ export function HudWidget({
 
         {collapsed ? (
           <div className="collapsed-bar">
-            <div className="collapsed-bar-fill" style={{ width: `${Math.round(cpu.load)}%` }} />
+            <div className="collapsed-bar-fill" style={fillStyle(Math.round(cpu.load))} />
           </div>
         ) : (
           <>
@@ -397,7 +398,7 @@ export function HudWidget({
                 <div className="metric-bar">
                   <div
                     className="metric-bar-fill"
-                    style={{ width: `${Math.round(cpu.load)}%` }}
+                    style={fillStyle(Math.round(cpu.load))}
                   />
                 </div>
               </div>
@@ -456,7 +457,7 @@ export function HudWidget({
 
         {collapsed ? (
           <div className="collapsed-bar">
-            <div className="collapsed-bar-fill gpu" style={{ width: `${Math.round(gpu.load)}%` }} />
+            <div className="collapsed-bar-fill gpu" style={fillStyle(Math.round(gpu.load))} />
           </div>
         ) : (
           <>
@@ -475,7 +476,7 @@ export function HudWidget({
                 <div className="metric-bar">
                   <div
                     className="metric-bar-fill gpu"
-                    style={{ width: `${Math.round(gpu.load)}%` }}
+                    style={fillStyle(Math.round(gpu.load))}
                   />
                 </div>
               </div>
@@ -502,9 +503,7 @@ export function HudWidget({
                   <div className="memory-bar">
                     <div
                       className="memory-bar-fill"
-                      style={{
-                        width: `${(gpu.memoryUsed / gpu.memoryTotal) * 100}%`,
-                      }}
+                      style={fillStyle((gpu.memoryUsed / gpu.memoryTotal) * 100)}
                     />
                   </div>
                 )}
@@ -550,7 +549,7 @@ export function HudWidget({
           <div className="collapsed-bar-group">
             {hardwareData.storage.map((drive, i) => (
               <div key={i} className="collapsed-bar">
-                <div className="collapsed-bar-fill storage" style={{ width: `${Math.min(drive.usedSpace, 100)}%` }} />
+                <div className="collapsed-bar-fill storage" style={fillStyle(Math.min(drive.usedSpace, 100))} />
               </div>
             ))}
           </div>
@@ -589,7 +588,7 @@ export function HudWidget({
                   <div className="metric-bar">
                     <div
                       className="metric-bar-fill storage"
-                      style={{ width: `${Math.min(drive.usedSpace, 100)}%` }}
+                      style={fillStyle(Math.min(drive.usedSpace, 100))}
                     />
                   </div>
                 </div>
@@ -862,7 +861,7 @@ export function HudWidget({
 
         {collapsed ? (
           <div className="collapsed-bar">
-            <div className="collapsed-bar-fill display" style={{ width: `${fpsBarPercent}%` }} />
+            <div className="collapsed-bar-fill display" style={fillStyle(fpsBarPercent)} />
           </div>
         ) : (
           <div className="display-metrics">
@@ -918,7 +917,7 @@ export function HudWidget({
       <div className="mini-bar">
         <div
           className={`mini-bar-fill${barClass ? ` ${barClass}` : ""}`}
-          style={{ width: `${Math.min(Math.round(usage), 100)}%` }}
+          style={fillStyle(Math.min(Math.round(usage), 100))}
         />
       </div>
       <span className="mini-usage">{Math.round(usage)}<span className="mini-unit">%</span></span>
