@@ -215,6 +215,50 @@ async fn set_always_on_top(app: AppHandle, enabled: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Sets WebView2's memory usage target. "Low" drops caches and trims the
+/// renderer's working set (possibly paging it out), which suits the HUD
+/// while nobody touches it: a monitor eating hundreds of MB defeats its own
+/// purpose. It can make interaction sluggish though, so the frontend asks
+/// for "normal" while the pointer is over the HUD or a panel is open.
+#[cfg(target_os = "windows")]
+fn set_webview_memory_target(window: &tauri::WebviewWindow, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    };
+    use windows_core::Interface;
+
+    let level = if low {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+    } else {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+    };
+    let result = window.with_webview(move |webview| unsafe {
+        // ICoreWebView2_19 needs WebView2 Runtime 114+; older ones just skip
+        let target = webview
+            .controller()
+            .CoreWebView2()
+            .and_then(|core| core.cast::<ICoreWebView2_19>())
+            .and_then(|core| core.SetMemoryUsageTargetLevel(level));
+        if let Err(e) = target {
+            crate::log_warn!("WebView", "Could not set WebView2 memory target: {}", e);
+        }
+    });
+    if let Err(e) = result {
+        crate::log_warn!("WebView", "with_webview failed: {}", e);
+    }
+}
+
+#[tauri::command]
+fn set_webview_memory_low(app: AppHandle, low: bool) {
+    #[cfg(target_os = "windows")]
+    if let Some(window) = app.get_webview_window("main") {
+        set_webview_memory_target(&window, low);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (app, low);
+}
+
 /// Maps the `backgroundEffect` setting to a native backdrop. Unknown values
 /// (and "none") clear the effect rather than erroring, so a stale setting
 /// from a newer build degrades to the plain translucent panel.
@@ -827,6 +871,7 @@ fn main() {
                     if let Ok(hwnd) = window.hwnd() {
                         window_debug::set_main_hwnd_raw(hwnd.0 as isize);
                     }
+                    set_webview_memory_target(&window, true);
                 }
             }
 
@@ -840,6 +885,7 @@ fn main() {
             set_always_on_back,
             set_background_effect,
             fit_window_height,
+            set_webview_memory_low,
             set_window_position,
             set_auto_start,
             get_window_state,

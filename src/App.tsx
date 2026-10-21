@@ -16,6 +16,9 @@ import { useAudioDevices } from "./hooks/useAudioDevices";
 import type { WindowState, SectionType } from "./types";
 import "./styles/App.css";
 
+// Idle time before WebView2 is asked to trim memory again (ms)
+const MEMORY_LOW_DELAY_MS = 3000;
+
 // Window height floor while the settings / restore overlay is open (CSS px)
 const OVERLAY_MIN_HEIGHT = 560;
 // The update notice floats 60px above the bottom; leave room for it plus the header
@@ -196,6 +199,36 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, [updateSettings, queueFit]);
+
+  // WebView2 runs with a "low" memory target while the HUD is just being
+  // looked at, and "normal" while it's used: low can page memory out and
+  // make clicks / dropdowns sluggish. Going back to low waits a moment so
+  // brushing past the window doesn't flip it back and forth.
+  const [pointerInside, setPointerInside] = useState(false);
+  useEffect(() => {
+    const root = document.documentElement;
+    const enter = () => setPointerInside(true);
+    const leave = () => setPointerInside(false);
+    root.addEventListener("mouseenter", enter);
+    root.addEventListener("mouseleave", leave);
+    return () => {
+      root.removeEventListener("mouseenter", enter);
+      root.removeEventListener("mouseleave", leave);
+    };
+  }, []);
+  const interacting = miniMode
+    ? miniInteractive
+    : pointerInside || showSettings || showRestorePanel;
+  useEffect(() => {
+    if (interacting) {
+      invoke("set_webview_memory_low", { low: false }).catch(() => {});
+      return;
+    }
+    const timer = setTimeout(() => {
+      invoke("set_webview_memory_low", { low: true }).catch(() => {});
+    }, MEMORY_LOW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [interacting]);
 
   // Apply theme to document root
   useEffect(() => {

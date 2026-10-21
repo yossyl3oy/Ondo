@@ -26,6 +26,8 @@ sysinfo = "0.39"
 # Windows-specific dependencies for hardware monitoring
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"
+# Same version Tauri/wry already pull in; used for WebView2 tuning only
+webview2-com = "0.39"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Pipes",

@@ -2663,6 +2663,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "tokio",
+ "webview2-com",
  "windows",
  "windows-core",
 ]
