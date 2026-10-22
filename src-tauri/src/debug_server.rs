@@ -59,6 +59,7 @@ pub async fn start_debug_server(mut shutdown: oneshot::Receiver<()>) {
                 (_, "/api/sensors") => handle_sensors().await,
                 (_, "/api/pawnio") => handle_pawnio(),
                 (_, "/api/window") => handle_window_info(),
+                (_, "/api/window/events") => handle_window_events(&query),
                 (_, "/help") => handle_help(&query),
                 (_, "/status") => handle_status(&query),
                 (_, "/logs") => handle_logs(&query),
@@ -138,6 +139,7 @@ fn handle_help(query: &HashMap<String, String>) -> String {
     {"method": "GET", "path": "/api/sensors", "description": "Raw sensor list (text)"},
     {"method": "GET", "path": "/api/pawnio", "description": "PawnIO driver status (JSON)"},
     {"method": "GET", "path": "/api/window", "description": "Main window state: HWND, class, styles, DWM attributes, injected DLLs (Windows only)"},
+    {"method": "GET", "path": "/api/window/events", "description": "Persistent window geometry log with causes (user / app / EXTERNAL), DPI, display, sleep events. ?limit=N (default 500)"},
     {"method": "GET", "path": "/logs", "description": "All logs. Filters: ?since=<epoch_ms>&limit=N&level=info&tag=Hardware"},
     {"method": "GET", "path": "/logs/tail", "description": "Latest N lines. ?n=100 (default)"},
     {"method": "GET", "path": "/logs/search", "description": "Regex search. ?q=<pattern>&limit=200"}
@@ -243,6 +245,15 @@ fn handle_pawnio() -> String {
 }
 
 // --- Window debug endpoints ---
+
+fn handle_window_events(query: &HashMap<String, String>) -> String {
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    let body = crate::window_events::read_log_tail(limit);
+    http_response(200, "text/plain; charset=utf-8", &body)
+}
 
 fn handle_window_info() -> String {
     match window_debug::get_window_info() {

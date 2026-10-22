@@ -153,6 +153,7 @@ function App() {
       const cssHeight = miniEl ? miniEl.getBoundingClientRect().height + 4 : 120;
       const dpr = window.devicePixelRatio || 1;
       await invoke("restore_window_state", {
+        reason: "mini-enter",
         state: {
           x: currentState.x,
           y: currentState.y,
@@ -161,7 +162,7 @@ function App() {
         },
       });
       // Reposition to settings position
-      await invoke("set_window_position", { position: positionRef.current });
+      await invoke("set_window_position", { position: positionRef.current, reason: "mini-enter" });
     };
 
     const exitMini = async () => {
@@ -171,8 +172,8 @@ function App() {
       const saved = savedWindowStateRef.current;
       if (!saved) return;
       // Restore saved window size, then reposition to avoid overflow
-      await invoke("restore_window_state", { state: saved });
-      await invoke("set_window_position", { position: positionRef.current });
+      await invoke("restore_window_state", { state: saved, reason: "mini-exit" });
+      await invoke("set_window_position", { position: positionRef.current, reason: "mini-exit" });
       // Cleared only now: until the restore lands the window is still
       // mini-sized, and saveWindowState must not persist that
       savedWindowStateRef.current = null;

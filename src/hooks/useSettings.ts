@@ -119,7 +119,7 @@ export function useSettings(): UseSettingsResult {
             await invoke("set_always_on_back", { enabled: newSettings.alwaysOnBack });
           }
           if (newSettings.position !== undefined) {
-            await invoke("set_window_position", { position: newSettings.position });
+            await invoke("set_window_position", { position: newSettings.position, reason: "position-setting" });
           }
           if (newSettings.autoStart !== undefined) {
             await invoke("set_auto_start", { enabled: newSettings.autoStart });

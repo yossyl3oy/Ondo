@@ -11,6 +11,7 @@ mod log_buffer;
 mod settings;
 mod tray;
 mod window_debug;
+mod window_events;
 mod window_monitor;
 
 use serde::{Deserialize, Serialize};
@@ -294,8 +295,36 @@ async fn set_background_effect(app: AppHandle, effect: String) -> Result<(), Str
     Ok(())
 }
 
+/// Runs a window operation on the UI thread with its geometry changes
+/// attributed to `reason` in the window event log, and waits for it. On
+/// that thread Tauri applies window ops synchronously, which both makes the
+/// attribution exact and keeps consecutive commands in order.
+async fn on_main_thread<R: Send + 'static>(
+    app: &AppHandle,
+    reason: String,
+    f: impl FnOnce() -> Result<R, String> + Send + 'static,
+) -> Result<R, String> {
+    let (tx, rx) = oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(window_events::with_app_reason(&reason, f));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await
+        .map_err(|_| "window operation was dropped".to_string())?
+}
+
 #[tauri::command]
-async fn set_window_position(app: AppHandle, position: String) -> Result<(), String> {
+async fn set_window_position(
+    app: AppHandle,
+    position: String,
+    reason: Option<String>,
+) -> Result<(), String> {
+    let handle = app.clone();
+    let reason = reason.unwrap_or_else(|| "position".into());
+    on_main_thread(&app, reason, move || apply_window_position(&handle, &position)).await
+}
+
+fn apply_window_position(app: &AppHandle, position: &str) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         let monitor = window
             .current_monitor()
@@ -617,7 +646,17 @@ async fn get_window_state(app: AppHandle) -> Result<WindowStateData, String> {
 }
 
 #[tauri::command]
-async fn restore_window_state(app: AppHandle, state: WindowStateData) -> Result<(), String> {
+async fn restore_window_state(
+    app: AppHandle,
+    state: WindowStateData,
+    reason: Option<String>,
+) -> Result<(), String> {
+    let handle = app.clone();
+    let reason = reason.unwrap_or_else(|| "restore".into());
+    on_main_thread(&app, reason, move || apply_window_state(&handle, &state)).await
+}
+
+fn apply_window_state(app: &AppHandle, state: &WindowStateData) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window
             .set_position(tauri::PhysicalPosition::new(state.x, state.y))
@@ -721,6 +760,17 @@ async fn fit_window_height(
     state: State<'_, AppState>,
     height: Option<f64>,
 ) -> Result<(), String> {
+    let position = state
+        .settings
+        .lock()
+        .map(|s| s.position.clone())
+        .unwrap_or_default();
+    let handle = app.clone();
+    let reason = if height.is_some() { "fit" } else { "fit-unlock" };
+    on_main_thread(&app, reason.into(), move || apply_fit(&handle, height, &position)).await
+}
+
+fn apply_fit(app: &AppHandle, height: Option<f64>, position: &str) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
@@ -744,12 +794,7 @@ async fn fit_window_height(
         return Ok(());
     };
     let area = monitor.work_area();
-    let position = state
-        .settings
-        .lock()
-        .map(|s| s.position.clone())
-        .unwrap_or_default();
-    let (_, vertical) = position_anchors(&position);
+    let (_, vertical) = position_anchors(position);
 
     // Round up: at fractional scales rounding to nearest can land a hair
     // short of the content and flash a scrollbar on every value update
@@ -850,13 +895,16 @@ fn main() {
             // Position window on startup
             if let Some(window) = app.get_webview_window("main") {
                 // Restore saved window state if available
-                if let Some(ref state) = startup_window_state {
-                    let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
-                    let _ = window.set_size(tauri::PhysicalSize::new(state.width, state.height));
-                } else {
-                    // Set initial position based on setting
-                    let _ = set_initial_position(&window, &startup_position);
-                }
+                // setup runs on the UI thread, so this attributes directly
+                window_events::with_app_reason("startup", || {
+                    if let Some(ref state) = startup_window_state {
+                        let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                        let _ = window.set_size(tauri::PhysicalSize::new(state.width, state.height));
+                    } else {
+                        // Set initial position based on setting
+                        let _ = set_initial_position(&window, &startup_position);
+                    }
+                });
 
                 // Set always on top/back
                 if startup_always_on_back {
@@ -870,6 +918,8 @@ fn main() {
                 {
                     if let Ok(hwnd) = window.hwnd() {
                         window_debug::set_main_hwnd_raw(hwnd.0 as isize);
+                        // Record every geometry change and what caused it
+                        window_events::install(hwnd.0 as isize);
                     }
                     set_webview_memory_target(&window, true);
                 }
