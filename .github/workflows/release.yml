@@ -23,6 +23,7 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
       is_rebuild: ${{ steps.check-release.outputs.exists }}
       skip: ${{ steps.check-version.outputs.skip }}
+      prev_tag: ${{ steps.changelog.outputs.prev_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -97,6 +98,7 @@ jobs:
           else
             COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
           fi
+          echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
           {
             echo "commits<<EOF"
             echo "$COMMITS"
@@ -275,3 +277,25 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: true
           updaterJsonKeepUniversal: true
+
+  notify:
+    needs: [create-release, build-tauri]
+    # A skipped run published nothing; a cancelled one is dropped by releasecast
+    if: always() && needs.create-release.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: yossyl3oy/releasecast@v1
+        with:
+          webhook-url: ${{ secrets.RELEASECAST_WEBHOOK_URL }}
+          status: ${{ needs.create-release.result != 'success' && needs.create-release.result || needs.build-tauri.result }}
+          project: ondo
+          kind: release
+          version: v${{ needs.create-release.outputs.version }}
+          since: ${{ needs.create-release.outputs.prev_tag }}
+          icon-path: src-tauri/icons/128x128.png
+          # The release page once it has its assets; otherwise this run, to see what failed
+          url: ${{ needs.build-tauri.result == 'success' && format('{0}/{1}/releases/tag/v{2}', github.server_url, github.repository, needs.create-release.outputs.version) || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
