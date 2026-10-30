@@ -139,7 +139,7 @@ jobs:
           - platform: windows-latest
             args: '--bundles nsis'
             rust_targets: ''
-          - platform: macos-14
+          - platform: macos-15
             args: '--target aarch64-apple-darwin'
             rust_targets: 'aarch64-apple-darwin'
 
