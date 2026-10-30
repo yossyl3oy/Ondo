@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioDevice } from "../types";
 import { accrueUsage, loadUsage, saveUsage, sortByUsage } from "../audioUsage";
+import { captureBackendError, captureOnce } from "../sentry";
 
 interface UseAudioDevicesReturn {
   devices: AudioDevice[];
@@ -31,7 +32,12 @@ export function useAudioDevices(): UseAudioDevicesReturn {
       setDevices(sortByUsage(result, usageRef.current));
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      // 5秒ごとのポーリングなので初回のみ送信
+      captureOnce("get_audio_devices", () =>
+        captureBackendError(message, { source: "audio", command: "get_audio_devices" }),
+      );
     }
   }, []);
 
@@ -55,7 +61,15 @@ export function useAudioDevices(): UseAudioDevicesReturn {
         // Refresh device list immediately after switching
         await fetchDevices();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        captureOnce(`set_default_audio_device:${message}`, () =>
+          captureBackendError(message, {
+            source: "audio",
+            command: "set_default_audio_device",
+            deviceType,
+          }),
+        );
       } finally {
         setSwitching(false);
       }

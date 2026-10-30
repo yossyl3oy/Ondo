@@ -46,6 +46,8 @@ src-tauri/resources/
 # C# LHM CLI build artifacts
 src-lhm/bin/
 src-lhm/obj/
+src-lhm-tests/bin/
+src-lhm-tests/obj/
 
 # Generated bundles
 *.msi

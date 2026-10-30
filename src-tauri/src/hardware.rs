@@ -18,6 +18,9 @@ use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
 
+#[cfg(target_os = "windows")]
+use sentry::Level;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LhmDaemonStatus {
@@ -37,6 +40,8 @@ struct LhmResponse {
     gpu: Option<LhmGpuData>,
     storage: Option<Vec<LhmStorageData>>,
     motherboard: Option<LhmMotherboardData>,
+    /// Sent instead of the data when a daemon tick threw
+    error: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -105,10 +110,76 @@ struct LhmDaemon {
     process: Child,
     reader: BufReader<ChildStdout>,
     latest_data: Option<LhmResponse>,
+    output_watch: OutputWatch,
 }
 
 #[cfg(target_os = "windows")]
 static LHM_DAEMON: Mutex<Option<LhmDaemon>> = Mutex::new(None);
+
+#[cfg(target_os = "windows")]
+static LHM_CLOCK: once_cell::sync::Lazy<std::time::Instant> =
+    once_cell::sync::Lazy::new(std::time::Instant::now);
+
+/// Daemon output this quiet for this long, while it keeps running, means
+/// the HUD is showing the last values it got, frozen.
+#[cfg(any(target_os = "windows", test))]
+const OUTPUT_STALL_AFTER_MS: u64 = 15_000;
+/// A longer gap between polls (sleep, nobody polling) isn't counted.
+#[cfg(any(target_os = "windows", test))]
+const OUTPUT_MAX_POLL_GAP_MS: u64 = 10_000;
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq)]
+enum OutputChange {
+    Stalled { quiet_ms: u64 },
+    Resumed,
+}
+
+/// Notices the daemon running on without writing any data.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Default)]
+struct OutputWatch {
+    last_poll_ms: Option<u64>,
+    quiet_ms: u64,
+    stalled: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl OutputWatch {
+    /// Records one poll at `now_ms`; returns a change when the output just
+    /// stalled or just came back.
+    fn poll(&mut self, got_data: bool, now_ms: u64) -> Option<OutputChange> {
+        let step = self
+            .last_poll_ms
+            .map_or(0, |last| now_ms.saturating_sub(last));
+        self.last_poll_ms = Some(now_ms);
+
+        if got_data {
+            self.quiet_ms = 0;
+            return std::mem::take(&mut self.stalled).then_some(OutputChange::Resumed);
+        }
+        if step > OUTPUT_MAX_POLL_GAP_MS {
+            self.quiet_ms = 0;
+        } else {
+            self.quiet_ms += step;
+        }
+        if !self.stalled && self.quiet_ms >= OUTPUT_STALL_AFTER_MS {
+            self.stalled = true;
+            return Some(OutputChange::Stalled {
+                quiet_ms: self.quiet_ms,
+            });
+        }
+        None
+    }
+}
+
+/// Splits a daemon stderr line meant for Sentry, `[report] <title>: <details>`.
+/// The title must not vary, so Sentry groups by it.
+#[cfg(any(target_os = "windows", test))]
+fn parse_report_line(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("[report] ")?;
+    Some(rest.split_once(": ").unwrap_or((rest, "")))
+}
 
 /// Check whether the LHM daemon's stdout pipe has unread data.
 /// Uses PeekNamedPipe because PIPE_NOWAIT may not work reliably on
@@ -609,7 +680,7 @@ fn get_lhm_data() -> Option<LhmResponse> {
             }
             Err(e) => {
                 crate::log_error!("Hardware", "Failed to start LHM daemon: {}", e);
-                error_reporting::capture_lhm_error(&format!("Failed to start daemon: {}", e));
+                error_reporting::capture_lhm_event("Failed to start daemon", &e, Level::Error);
                 return None;
             }
         }
@@ -625,6 +696,11 @@ fn get_lhm_data() -> Option<LhmResponse> {
                 "Hardware",
                 "LHM daemon exited with status: {}, restarting...",
                 status
+            );
+            error_reporting::capture_lhm_event(
+                "Daemon exited",
+                &format!("status: {}", status),
+                Level::Error,
             );
             *daemon_guard = None;
             return None;
@@ -664,18 +740,64 @@ fn get_lhm_data() -> Option<LhmResponse> {
         }
     }
 
+    match daemon
+        .output_watch
+        .poll(!latest.is_empty(), LHM_CLOCK.elapsed().as_millis() as u64)
+    {
+        Some(OutputChange::Stalled { quiet_ms }) => {
+            crate::log_warn!(
+                "Hardware",
+                "LHM daemon is running but sent no data for {}s",
+                quiet_ms / 1000
+            );
+            error_reporting::capture_lhm_event(
+                "Daemon stopped sending data",
+                &format!("no output for {}s while running", quiet_ms / 1000),
+                Level::Error,
+            );
+        }
+        Some(OutputChange::Resumed) => {
+            crate::log_info!("Hardware", "LHM daemon is sending data again");
+        }
+        None => {}
+    }
+
     // Parse the latest line if available
     if !latest.is_empty() {
         match serde_json::from_str::<LhmResponse>(latest.trim()) {
-            Ok(data) => daemon.latest_data = Some(data),
+            Ok(data) => {
+                report_lhm_error_line(&data);
+                daemon.latest_data = Some(data);
+            }
             Err(e) => {
                 crate::log_warn!("Hardware", "Failed to parse LHM JSON: {}", e);
+                report_lhm_parse_error(&e, &latest);
             }
         }
     }
 
     // Newest parsed data (or the cached copy if nothing new arrived)
     daemon.latest_data.clone()
+}
+
+/// A daemon tick that threw writes `{"error": ...}` (typically an LHM
+/// exception), which parses as a response without data.
+#[cfg(target_os = "windows")]
+fn report_lhm_error_line(data: &LhmResponse) {
+    if let Some(error) = &data.error {
+        crate::log_warn!("Hardware", "LHM daemon error: {}", error);
+        error_reporting::capture_lhm_event("Daemon reported an error", error, Level::Error);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn report_lhm_parse_error(error: &serde_json::Error, line: &str) {
+    let head: String = line.trim().chars().take(200).collect();
+    error_reporting::capture_lhm_event(
+        "Failed to parse daemon output",
+        &format!("{}: {}", error, head),
+        Level::Error,
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -707,9 +829,33 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start LHM daemon: {}", e))?;
+
+    // The daemon reports diagnostics (e.g. rebuilding GPU devices) on stderr.
+    // Drained on its own thread so a full pipe never blocks the daemon, and
+    // decoded lossily since .NET writes it in the console code page.
+    if let Some(stderr) = child.stderr.take() {
+        std::thread::Builder::new()
+            .name("lhm-stderr".into())
+            .spawn(move || {
+                let mut reader = BufReader::new(stderr);
+                let mut line = Vec::new();
+                while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+                    let text = String::from_utf8_lossy(&line);
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        crate::log_warn!("Hardware", "LHM daemon: {}", text);
+                    }
+                    if let Some((title, details)) = parse_report_line(text) {
+                        error_reporting::capture_lhm_event(title, details, Level::Error);
+                    }
+                    line.clear();
+                }
+            })
+            .ok();
+    }
 
     let stdout = child
         .stdout
@@ -739,11 +885,13 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
                     match serde_json::from_str::<LhmResponse>(trimmed) {
                         Ok(data) => {
                             crate::log_info!("Hardware", "LHM daemon ready - first data received");
+                            report_lhm_error_line(&data);
                             initial_data = Some(data);
                             break;
                         }
                         Err(e) => {
                             crate::log_warn!("Hardware", "LHM initial data parse error: {}", e);
+                            report_lhm_parse_error(&e, trimmed);
                         }
                     }
                 }
@@ -760,12 +908,20 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
             "Hardware",
             "LHM daemon started but no initial data received within timeout"
         );
+        // Slow LHM init on some machines; it usually catches up, and one that
+        // never does shows up as missing readings in health.rs
+        error_reporting::capture_lhm_event(
+            "Daemon sent no data at startup",
+            "no data line within 10s",
+            Level::Warning,
+        );
     }
 
     Ok(LhmDaemon {
         process: child,
         reader,
         latest_data: initial_data,
+        output_watch: OutputWatch::default(),
     })
 }
 
@@ -1513,6 +1669,13 @@ pub fn lhm_daemon_status() -> LhmDaemonStatus {
 
     match daemon.process.try_wait() {
         Ok(Some(status)) => {
+            // Same as get_lhm_data's, which won't see this exit now
+            crate::log_warn!("Hardware", "LHM daemon exited with status: {}", status);
+            error_reporting::capture_lhm_event(
+                "Daemon exited",
+                &format!("status: {}", status),
+                Level::Error,
+            );
             *daemon_guard = None;
             LhmDaemonStatus {
                 supported: true,
@@ -1556,7 +1719,9 @@ pub fn lhm_daemon_status() -> LhmDaemonStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_nvidia_smi_stats, NvidiaGpuStats};
+    use super::{
+        parse_nvidia_smi_stats, parse_report_line, NvidiaGpuStats, OutputChange, OutputWatch,
+    };
 
     #[test]
     fn parses_combined_nvidia_smi_output() {
@@ -1579,5 +1744,75 @@ mod tests {
     #[test]
     fn rejects_incomplete_nvidia_smi_output() {
         assert!(parse_nvidia_smi_stats("62, 48, 6144").is_none());
+    }
+
+    /// Polls once a second from `*now`, returning every change seen.
+    fn poll(
+        watch: &mut OutputWatch,
+        now: &mut u64,
+        ticks: u64,
+        got_data: bool,
+    ) -> Vec<OutputChange> {
+        let mut changes = Vec::new();
+        for _ in 0..ticks {
+            *now += 1_000;
+            changes.extend(watch.poll(got_data, *now));
+        }
+        changes
+    }
+
+    #[test]
+    fn reports_output_that_stops_once_and_when_it_resumes() {
+        let mut watch = OutputWatch::default();
+        let mut now = 0;
+        assert!(poll(&mut watch, &mut now, 10, true).is_empty());
+
+        assert!(poll(&mut watch, &mut now, 14, false).is_empty());
+        assert_eq!(
+            poll(&mut watch, &mut now, 100, false),
+            [OutputChange::Stalled { quiet_ms: 15_000 }]
+        );
+        assert_eq!(poll(&mut watch, &mut now, 5, true), [OutputChange::Resumed]);
+    }
+
+    #[test]
+    fn polls_without_a_new_line_in_between_are_not_a_stall() {
+        let mut watch = OutputWatch::default();
+        let mut now = 0;
+        for _ in 0..100 {
+            assert!(poll(&mut watch, &mut now, 1, true).is_empty());
+            assert!(poll(&mut watch, &mut now, 3, false).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_gap_between_polls_is_not_counted_as_quiet() {
+        let mut watch = OutputWatch::default();
+        let mut now = 0;
+        poll(&mut watch, &mut now, 3, true);
+        poll(&mut watch, &mut now, 10, false);
+
+        // Sleep: the next poll comes an hour later, before the daemon wrote
+        now += 3_600_000;
+        assert!(watch.poll(false, now).is_none());
+        assert!(poll(&mut watch, &mut now, 14, false).is_empty());
+        assert_eq!(poll(&mut watch, &mut now, 1, false).len(), 1);
+    }
+
+    #[test]
+    fn parses_report_lines_from_the_daemon() {
+        assert_eq!(
+            parse_report_line("[report] GPU temperature missing: attempt 1/6, gpu 'X'"),
+            Some(("GPU temperature missing", "attempt 1/6, gpu 'X'"))
+        );
+        assert_eq!(
+            parse_report_line("[report] Something happened"),
+            Some(("Something happened", ""))
+        );
+        assert_eq!(
+            parse_report_line("Unhandled exception. System.Exception: x"),
+            None
+        );
+        assert_eq!(parse_report_line("   at Program.Main()"), None);
     }
 }

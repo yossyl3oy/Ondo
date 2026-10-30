@@ -32,6 +32,18 @@ export function initSentry() {
   }
 }
 
+const reportedKeys = new Set<string>();
+
+/**
+ * `send` を `key` ごとにセッション中1回だけ実行する。
+ * ポーリングで毎回起きる失敗を毎秒送らないため
+ */
+export function captureOnce(key: string, send: () => void) {
+  if (reportedKeys.has(key)) return;
+  reportedKeys.add(key);
+  send();
+}
+
 export function testSentryError() {
   Sentry.captureException(new Error("Sentry test error from Ondo"));
   console.log("[Sentry] Test error sent");

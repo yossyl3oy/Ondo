@@ -130,6 +130,7 @@ class Program
             });
 
             var tick = 0;
+            var gpuWatchdog = new GpuTemperatureWatchdog();
             while (true)
             {
                 try
@@ -137,6 +138,9 @@ class Program
                     UpdateShownHardware(_computer, _visitor, tick++);
                     var data = ExtractData(_computer);
                     OutputJson(data);
+
+                    if (gpuWatchdog.Observe(data.Gpu != null, data.Gpu?.Temperature > 0))
+                        ResetGpus(_computer, gpuWatchdog.Resets, report: gpuWatchdog.HadTemperature);
                 }
                 catch (Exception ex)
                 {
@@ -185,6 +189,41 @@ class Program
                     continue;
             }
             hardware.Accept(visitor);
+        }
+    }
+
+    /// Lines on stderr starting with this go to Sentry as
+    /// "<title>: <details>", the title fixed so Sentry groups by it. The
+    /// app logs every stderr line either way.
+    const string ReportPrefix = "[report] ";
+
+    /// Re-creates the GPU devices (see GpuTemperatureWatchdog). First writes
+    /// the shown GPU's temperature sensors, to tell why the core temperature
+    /// went missing; to Sentry only if it had worked (`report`), as a GPU
+    /// that never had one more likely lacks the sensor.
+    static void ResetGpus(Computer computer, int attempt, bool report)
+    {
+        var gpu = computer.Hardware.FirstOrDefault(h => h.HardwareType
+            is HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel);
+        var temperatures = gpu == null ? "" : string.Join(", ", gpu.Sensors
+            .Where(s => s.SensorType == SensorType.Temperature)
+            .Select(s => $"{s.Name}={s.Value?.ToString() ?? "null"}"));
+        Console.Error.WriteLine(
+            $"{(report ? ReportPrefix : "")}GPU temperature missing, rebuilding GPU devices: " +
+            $"attempt {attempt}/{GpuTemperatureWatchdog.MaxResets}, gpu '{gpu?.Name}', " +
+            $"temperature sensors [{temperatures}]");
+
+        try
+        {
+            computer.IsGpuEnabled = false;
+            computer.IsGpuEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            // A half-done rebuild can leave no GPU devices, which the watchdog
+            // never retries; exit so the app starts a fresh daemon instead
+            Console.Error.WriteLine($"{ReportPrefix}Rebuilding GPU devices failed, exiting: {ex.Message}");
+            Environment.Exit(1);
         }
     }
 

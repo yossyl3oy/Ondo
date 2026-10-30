@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HardwareData } from "../types";
-import { captureHardwareError } from "../sentry";
+import { captureHardwareError, captureOnce } from "../sentry";
 
 const EMA_ALPHA = 0.3;
+// これ以上 get_hardware_data が返ってこなければ、HUDが止まっているとみなす。
+// LHMデーモンの起動直後は最初のデータ待ちで1回の呼び出しが最大10秒かかるので、
+// それより十分長くする
+const STALL_REPORT_MS = 30_000;
+const STALL_CHECK_MS = 1_000;
+// チェックの間隔がこれより空いたらスリープ明けとみなし、数え直す
+const STALL_CHECK_MAX_STEP_MS = 3_000;
 
 type NetworkInterface = NonNullable<HardwareData["network"]>[number];
 
@@ -43,11 +50,6 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
   const [hardwareData, setHardwareData] = useState<HardwareData>(INITIAL_DATA);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // エラーを一度だけ送信するためのフラグ
-  const errorReportedRef = useRef<{ invoke: boolean; nullData: boolean }>({
-    invoke: false,
-    nullData: false,
-  });
   // ネットワーク速度の平滑化用EMA (インターフェース名 → { dl, ul })
   const networkEmaRef = useRef<Map<string, { dl: number; ul: number }>>(new Map());
   // ネットワークインターフェースの最終アクティブ時刻 (インターフェース名 → timestamp)
@@ -55,6 +57,25 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
   const NETWORK_GRACE_PERIOD_MS = 3000;
 
   const fetchData = useCallback(async () => {
+    // 返ってこない呼び出しは完了時の計測では検知できないのでタイマーで見る。
+    // スリープ等でタイマー自体が止まっていた間は待ち時間に数えない
+    let lastCheck = Date.now();
+    let waited = 0;
+    const stallTimer = setInterval(() => {
+      const now = Date.now();
+      const step = now - lastCheck;
+      lastCheck = now;
+      waited = step > STALL_CHECK_MAX_STEP_MS ? 0 : waited + step;
+      if (waited >= STALL_REPORT_MS) {
+        clearInterval(stallTimer);
+        captureOnce("hardware-stall", () =>
+          captureHardwareError(
+            `get_hardware_data has not returned for ${Math.round(waited / 1000)}s`,
+            "stall",
+          ),
+        );
+      }
+    }, STALL_CHECK_MS);
     try {
       const data = await invoke<HardwareData>("get_hardware_data");
 
@@ -108,35 +129,18 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
         }
       }
 
+      // 欠けた・おかしな値（N/A表示など）はバックエンドの health.rs が
+      // ログ付きでSentryに送るので、ここでは見ない
       setHardwareData(data);
       setError(null);
-
-      // CPU/GPUがnullの場合はエラーとしてSentryに送信（初回のみ）
-      if (!errorReportedRef.current.nullData) {
-        if (data.cpu === null && data.gpu === null) {
-          // 詳細エラーがある場合はそれを送信
-          const errorDetail = data.cpuError || data.gpuError || "Unknown error";
-          captureHardwareError(`Both CPU and GPU data are null: ${errorDetail}`, "both");
-          errorReportedRef.current.nullData = true;
-        } else if (data.cpu === null) {
-          const errorDetail = data.cpuError || "Unknown error";
-          captureHardwareError(`CPU data is null: ${errorDetail}`, "cpu");
-          errorReportedRef.current.nullData = true;
-        } else if (data.gpu === null) {
-          const errorDetail = data.gpuError || "Unknown error";
-          captureHardwareError(`GPU data is null: ${errorDetail}`, "gpu");
-          errorReportedRef.current.nullData = true;
-        }
-      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
 
       // invokeエラーをSentryに送信（初回のみ）
-      if (!errorReportedRef.current.invoke) {
-        captureHardwareError(`invoke error: ${errorMessage}`, "invoke");
-        errorReportedRef.current.invoke = true;
-      }
+      captureOnce("hardware-invoke", () =>
+        captureHardwareError(`invoke error: ${errorMessage}`, "invoke"),
+      );
 
       // Use mock data in development for testing UI
       if (import.meta.env.DEV) {
@@ -147,6 +151,7 @@ export function useHardwareData(intervalMs: number = 1000): UseHardwareDataResul
         setHardwareData(mockData);
       }
     } finally {
+      clearInterval(stallTimer);
       setIsLoading(false);
     }
   }, []);

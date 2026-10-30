@@ -7,6 +7,7 @@ mod debug_server;
 mod error_reporting;
 mod fps_monitor;
 mod hardware;
+mod health;
 mod log_buffer;
 mod settings;
 mod tray;
@@ -152,22 +153,17 @@ impl AppState {
 async fn get_hardware_data() -> Result<HardwareData, String> {
     match hardware::get_hardware_info().await {
         Ok(data) => {
-            // Report if both CPU and GPU are null (indicates a problem)
-            if data.cpu.is_none() && data.gpu.is_none() {
-                let error_detail = data
-                    .cpu_error
-                    .as_deref()
-                    .or(data.gpu_error.as_deref())
-                    .unwrap_or("Unknown error");
-                error_reporting::capture_hardware_error(
-                    &format!("Both CPU and GPU data unavailable: {}", error_detail),
-                    "both",
-                );
+            // Checked here, on what the HUD is about to show — not in
+            // get_hardware_info, which the debug server also calls
+            for anomaly in health::check(&data) {
+                error_reporting::capture_health_anomaly(&anomaly, &data);
             }
             Ok(data)
         }
         Err(e) => {
-            error_reporting::capture_hardware_error(&e, "get_hardware_info");
+            if error_reporting::first_report(&format!("get_hardware_info:{}", e)) {
+                error_reporting::capture_hardware_error(&e, "get_hardware_info");
+            }
             Err(e)
         }
     }
