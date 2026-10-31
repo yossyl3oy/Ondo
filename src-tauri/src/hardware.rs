@@ -120,8 +120,13 @@ static LHM_DAEMON: Mutex<Option<LhmDaemon>> = Mutex::new(None);
 static LHM_CLOCK: once_cell::sync::Lazy<std::time::Instant> =
     once_cell::sync::Lazy::new(std::time::Instant::now);
 
+/// Outlives each daemon, to see restarts in a row.
+#[cfg(target_os = "windows")]
+static LHM_STALL_RESTARTS: once_cell::sync::Lazy<Mutex<StallRestarts>> =
+    once_cell::sync::Lazy::new(Default::default);
+
 /// Daemon output this quiet for this long, while it keeps running, means
-/// the HUD is showing the last values it got, frozen.
+/// it's stuck: the HUD would show the last values it got, frozen.
 #[cfg(any(target_os = "windows", test))]
 const OUTPUT_STALL_AFTER_MS: u64 = 15_000;
 /// A longer gap between polls (sleep, nobody polling) isn't counted.
@@ -170,6 +175,91 @@ impl OutputWatch {
             });
         }
         None
+    }
+
+    fn is_stalled(&self) -> bool {
+        self.stalled
+    }
+}
+
+/// A stalled daemon is restarted right away; each further restart in a row
+/// waits this long after the previous one, doubling. A daemon that's only
+/// slow to start (LHM init, on top of the 10 s `start_lhm_daemon` waits)
+/// gets more time on every try instead of being killed in a loop.
+#[cfg(any(target_os = "windows", test))]
+const STALL_RESTART_BACKOFF_MS: u64 = 30_000;
+/// Restarts in a row before a stalled daemon is left running, in case it
+/// comes back on its own.
+#[cfg(any(target_os = "windows", test))]
+const MAX_STALL_RESTARTS: u32 = 4;
+/// Running this long without a stall means the last restart worked, so the
+/// next stall is restarted right away again.
+#[cfg(any(target_os = "windows", test))]
+const STALL_RESTART_HEALTHY_MS: u64 = 60_000;
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq)]
+enum StallAction {
+    /// Kill the daemon so the next poll starts a new one
+    Restart { attempt: u32 },
+    /// Out of restarts in a row
+    GiveUp,
+}
+
+/// Decides when a stalled daemon gets killed and started again.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Default)]
+struct StallRestarts {
+    /// Restarts in a row, and when the last of them happened
+    streak: u32,
+    last_restart_ms: Option<u64>,
+    last_poll_ms: Option<u64>,
+    /// How long the current daemon has run without a stall
+    running_ms: u64,
+    gave_up: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl StallRestarts {
+    /// Records one poll at `now_ms`, `stalled` being the daemon's
+    /// `OutputWatch` state; returns what to do about a stall.
+    fn poll(&mut self, stalled: bool, now_ms: u64) -> Option<StallAction> {
+        let step = self
+            .last_poll_ms
+            .map_or(0, |last| now_ms.saturating_sub(last));
+        self.last_poll_ms = Some(now_ms);
+
+        if !stalled {
+            // A gap (sleep) restarts the count: the daemon may not have
+            // sent anything yet, and `OutputWatch` doesn't count it either
+            if step > OUTPUT_MAX_POLL_GAP_MS {
+                self.running_ms = 0;
+            } else {
+                self.running_ms += step;
+            }
+            if self.running_ms >= STALL_RESTART_HEALTHY_MS {
+                self.streak = 0;
+                self.last_restart_ms = None;
+                self.gave_up = false;
+            }
+            return None;
+        }
+        self.running_ms = 0;
+
+        if self.streak >= MAX_STALL_RESTARTS {
+            return (!std::mem::replace(&mut self.gave_up, true)).then_some(StallAction::GiveUp);
+        }
+        if let Some(last) = self.last_restart_ms {
+            let backoff = STALL_RESTART_BACKOFF_MS << (self.streak - 1);
+            if now_ms.saturating_sub(last) < backoff {
+                return None;
+            }
+        }
+        self.streak += 1;
+        self.last_restart_ms = Some(now_ms);
+        Some(StallAction::Restart {
+            attempt: self.streak,
+        })
     }
 }
 
@@ -477,6 +567,12 @@ fn get_display_info() -> Option<DisplayData> {
     })
 }
 
+/// Whether the last poll fell back to sysinfo, so switching is logged once
+/// instead of every second (a stalled daemon can keep it there for good).
+#[cfg(target_os = "windows")]
+static ON_SYSINFO_FALLBACK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "windows")]
 pub async fn get_hardware_info() -> Result<HardwareData, String> {
     tokio::task::spawn_blocking(|| {
@@ -515,6 +611,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         };
 
         if let Some(lhm) = lhm_data {
+            if ON_SYSINFO_FALLBACK.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                crate::log_info!("Hardware", "LHM data is back, leaving sysinfo fallback");
+            }
             // Use LHM data, supplement with sysinfo where needed
             let cpu = lhm.cpu.map(|c| {
                 // sysinfo cannot provide CPU temperature on Windows, so use LHM value (0 if unavailable)
@@ -650,7 +749,9 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             })
         } else {
             // Full fallback to sysinfo (LHM not available)
-            crate::log_warn!("Hardware", "LHM unavailable, using sysinfo fallback");
+            if !ON_SYSINFO_FALLBACK.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                crate::log_warn!("Hardware", "LHM unavailable, using sysinfo fallback");
+            }
             Ok(HardwareData {
                 cpu: sysinfo_cpu_data(true),
                 gpu: get_gpu_info_without_wmi(),
@@ -740,10 +841,8 @@ fn get_lhm_data() -> Option<LhmResponse> {
         }
     }
 
-    match daemon
-        .output_watch
-        .poll(!latest.is_empty(), LHM_CLOCK.elapsed().as_millis() as u64)
-    {
+    let now_ms = LHM_CLOCK.elapsed().as_millis() as u64;
+    match daemon.output_watch.poll(!latest.is_empty(), now_ms) {
         Some(OutputChange::Stalled { quiet_ms }) => {
             crate::log_warn!(
                 "Hardware",
@@ -760,6 +859,48 @@ fn get_lhm_data() -> Option<LhmResponse> {
             crate::log_info!("Hardware", "LHM daemon is sending data again");
         }
         None => {}
+    }
+
+    let stall_action = LHM_STALL_RESTARTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .poll(daemon.output_watch.is_stalled(), now_ms);
+    match stall_action {
+        Some(StallAction::Restart { attempt }) => {
+            crate::log_warn!(
+                "Hardware",
+                "Restarting the stalled LHM daemon (attempt {}/{})",
+                attempt,
+                MAX_STALL_RESTARTS
+            );
+            // No wait(): a daemon stuck in a driver call can take its time
+            // dying, and this holds the daemon lock. Windows has no zombies
+            // to reap; dropping the handle is enough.
+            if let Err(e) = daemon.process.kill() {
+                crate::log_warn!("Hardware", "Failed to kill the stalled LHM daemon: {}", e);
+            }
+            // Same as an exit: the next poll starts a new daemon
+            *daemon_guard = None;
+            return None;
+        }
+        Some(StallAction::GiveUp) => {
+            crate::log_warn!(
+                "Hardware",
+                "LHM daemon still stalled after {} restarts in a row, leaving it running",
+                MAX_STALL_RESTARTS
+            );
+            error_reporting::capture_lhm_event(
+                "Daemon kept stalling after restarts",
+                &format!("{} restarts in a row brought no data back", MAX_STALL_RESTARTS),
+                Level::Error,
+            );
+        }
+        None => {}
+    }
+    if daemon.output_watch.is_stalled() {
+        // Frozen values would pass for live ones on the HUD; it falls back
+        // to sysinfo (no temperatures) until data comes back
+        daemon.latest_data = None;
     }
 
     // Parse the latest line if available
@@ -909,7 +1050,7 @@ fn start_lhm_daemon() -> Result<LhmDaemon, String> {
             "LHM daemon started but no initial data received within timeout"
         );
         // Slow LHM init on some machines; it usually catches up, and one that
-        // never does shows up as missing readings in health.rs
+        // doesn't is restarted as a stall, with more time on each try
         error_reporting::capture_lhm_event(
             "Daemon sent no data at startup",
             "no data line within 10s",
@@ -1721,6 +1862,7 @@ pub fn lhm_daemon_status() -> LhmDaemonStatus {
 mod tests {
     use super::{
         parse_nvidia_smi_stats, parse_report_line, NvidiaGpuStats, OutputChange, OutputWatch,
+        StallAction, StallRestarts,
     };
 
     #[test]
@@ -1797,6 +1939,146 @@ mod tests {
         assert!(watch.poll(false, now).is_none());
         assert!(poll(&mut watch, &mut now, 14, false).is_empty());
         assert_eq!(poll(&mut watch, &mut now, 1, false).len(), 1);
+    }
+
+    /// Polls the restart policy once a second from `*now`, returning every
+    /// action.
+    fn poll_restarts(
+        restarts: &mut StallRestarts,
+        now: &mut u64,
+        ticks: u64,
+        stalled: bool,
+    ) -> Vec<StallAction> {
+        let mut actions = Vec::new();
+        for _ in 0..ticks {
+            *now += 1_000;
+            actions.extend(restarts.poll(stalled, *now));
+        }
+        actions
+    }
+
+    #[test]
+    fn backs_off_restarts_in_a_row_then_gives_up_once() {
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        assert!(poll_restarts(&mut restarts, &mut now, 30, false).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 1 }]
+        );
+
+        for (attempt, backoff_secs) in [(2, 30), (3, 60), (4, 120)] {
+            // The new daemon runs 25 s, then stalls too: held until
+            // `backoff_secs` after the previous restart
+            assert!(poll_restarts(&mut restarts, &mut now, 25, false).is_empty());
+            assert!(poll_restarts(&mut restarts, &mut now, backoff_secs - 26, true).is_empty());
+            assert_eq!(
+                poll_restarts(&mut restarts, &mut now, 1, true),
+                [StallAction::Restart { attempt }]
+            );
+        }
+
+        assert!(poll_restarts(&mut restarts, &mut now, 25, false).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 3_600, true),
+            [StallAction::GiveUp]
+        );
+    }
+
+    #[test]
+    fn a_short_recovery_keeps_the_backoff() {
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 1 }]
+        );
+        assert!(poll_restarts(&mut restarts, &mut now, 20, false).is_empty());
+        assert!(poll_restarts(&mut restarts, &mut now, 9, true).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 2 }]
+        );
+    }
+
+    #[test]
+    fn running_a_while_after_a_restart_starts_over() {
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        poll_restarts(&mut restarts, &mut now, 1, true);
+        assert!(poll_restarts(&mut restarts, &mut now, 120, false).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 1 }]
+        );
+    }
+
+    #[test]
+    fn time_asleep_is_not_running_time() {
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        poll_restarts(&mut restarts, &mut now, 1, true);
+
+        // The new daemon hasn't sent anything when the machine sleeps
+        poll_restarts(&mut restarts, &mut now, 5, false);
+        now += 3_600_000;
+        assert!(poll_restarts(&mut restarts, &mut now, 14, false).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 2 }]
+        );
+    }
+
+    #[test]
+    fn a_daemon_left_running_that_comes_back_can_be_restarted_again() {
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        let mut kills = 0;
+        while kills < 4 {
+            let actions = poll_restarts(&mut restarts, &mut now, 1, true);
+            kills += actions.len();
+        }
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 600, true),
+            [StallAction::GiveUp]
+        );
+
+        assert!(poll_restarts(&mut restarts, &mut now, 120, false).is_empty());
+        assert_eq!(
+            poll_restarts(&mut restarts, &mut now, 1, true),
+            [StallAction::Restart { attempt: 1 }]
+        );
+    }
+
+    /// Each daemon's LHM takes 40 s to send its first line. It's waited on
+    /// for 10 s at start (`start_lhm_daemon`), then polled once a second.
+    #[test]
+    fn a_daemon_slow_to_start_gets_the_time_it_needs() {
+        const FIRST_LINE_AFTER_MS: u64 = 40_000;
+        let mut restarts = StallRestarts::default();
+        let mut now = 0;
+        let mut kills = 0;
+        'daemon: loop {
+            let started = now;
+            now += 10_000;
+            let mut watch = OutputWatch::default();
+            loop {
+                let got_data = now - started >= FIRST_LINE_AFTER_MS;
+                watch.poll(got_data, now);
+                if got_data {
+                    break 'daemon;
+                }
+                let action = restarts.poll(watch.is_stalled(), now);
+                now += 1_000;
+                if let Some(StallAction::Restart { .. }) = action {
+                    kills += 1;
+                    continue 'daemon;
+                }
+            }
+        }
+        // Killed at 25 s and again 30 s later; the third gets a minute
+        assert_eq!(kills, 2);
+        assert_eq!(now, 96_000);
     }
 
     #[test]
