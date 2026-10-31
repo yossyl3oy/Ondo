@@ -87,6 +87,8 @@ export interface AppSettings {
   temperatureUnit: "celsius" | "fahrenheit";
   compactMode: boolean;
   debugServer: boolean;
+  /** Send error and sensor-health reports to Sentry (see README "Privacy") */
+  errorReporting: boolean;
   sectionOrder: SectionType[];
   hiddenSections: SectionType[];
   windowState?: WindowState;
@@ -104,6 +106,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   temperatureUnit: "celsius",
   compactMode: false,
   debugServer: false,
+  errorReporting: true,
   sectionOrder: ["cpu", "gpu", "storage", "motherboard", "network", "audio", "display"],
   hiddenSections: [],
 };

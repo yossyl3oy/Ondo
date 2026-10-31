@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, SectionType } from "../types";
 import { DEFAULT_SETTINGS, SECTION_TYPES } from "../types";
-import { captureSettingsError } from "../sentry";
+import { captureSettingsError, setErrorReporting } from "../sentry";
 
 const VALID_SECTIONS = new Set<string>(SECTION_TYPES);
 
@@ -33,6 +33,19 @@ interface UseSettingsResult {
 
 const STORAGE_KEY = "ondo_settings";
 
+/**
+ * localStorageに残っている設定。Tauriから読めない時 (ブラウザでのdev等) の
+ * フォールバックで、useSettingsのロード前にも使う
+ */
+export function readStoredSettings(): Partial<AppSettings> | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useSettings(): UseSettingsResult {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,6 +55,13 @@ export function useSettings(): UseSettingsResult {
   // Load settings on mount
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  // UI側のSentry送信可否も、設定が変わるのと同時に切り替える
+  const applySettings = useCallback((s: AppSettings) => {
+    settingsRef.current = s;
+    setSettings(s);
+    setErrorReporting(s.errorReporting);
   }, []);
 
   const migrateSettings = (s: AppSettings): AppSettings => {
@@ -63,16 +83,12 @@ export function useSettings(): UseSettingsResult {
       // Try to load from Tauri store first
       const stored = await invoke<AppSettings | null>("get_settings");
       if (stored) {
-        const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...stored });
-        settingsRef.current = loaded;
-        setSettings(loaded);
+        applySettings(migrateSettings({ ...DEFAULT_SETTINGS, ...stored }));
       } else {
         // Fallback to localStorage for development
         const localStored = localStorage.getItem(STORAGE_KEY);
         if (localStored) {
-          const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
-          settingsRef.current = loaded;
-          setSettings(loaded);
+          applySettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
         }
       }
     } catch (err) {
@@ -83,9 +99,7 @@ export function useSettings(): UseSettingsResult {
       const localStored = localStorage.getItem(STORAGE_KEY);
       if (localStored) {
         try {
-          const loaded = migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) });
-          settingsRef.current = loaded;
-          setSettings(loaded);
+          applySettings(migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(localStored) }));
         } catch {
           // Use defaults
         }
@@ -138,17 +152,15 @@ export function useSettings(): UseSettingsResult {
 
   const updateSettings = useCallback(async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settingsRef.current, ...newSettings };
-    settingsRef.current = updated;
-    setSettings(updated);
+    applySettings(updated);
 
     // Save to localStorage immediately
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     await persistSettings(updated, newSettings);
-  }, [persistSettings]);
+  }, [applySettings, persistSettings]);
 
   const resetSettings = useCallback(async () => {
-    settingsRef.current = DEFAULT_SETTINGS;
-    setSettings(DEFAULT_SETTINGS);
+    applySettings(DEFAULT_SETTINGS);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
 
     saveChainRef.current = saveChainRef.current
@@ -163,7 +175,7 @@ export function useSettings(): UseSettingsResult {
       });
 
     await saveChainRef.current;
-  }, []);
+  }, [applySettings]);
 
   return {
     settings,

@@ -12,7 +12,19 @@ function getPlatform(): string {
 // Get version from package.json (injected by Vite)
 const APP_VERSION = __APP_VERSION__;
 
-export function initSentry() {
+/**
+ * 設定の「Send Error Reports」。initは常に行い、送信の直前で見るので
+ * 切り替えは再起動なしで効く。起動ごとのセッションやclient reportは
+ * beforeSendを通らないため、transportで止める
+ */
+let reportingEnabled = true;
+
+export function setErrorReporting(enabled: boolean) {
+  reportingEnabled = enabled;
+}
+
+export function initSentry(enabled: boolean) {
+  setErrorReporting(enabled);
   const dsn = import.meta.env.VITE_SENTRY_DSN;
 
   if (dsn) {
@@ -21,6 +33,13 @@ export function initSentry() {
       environment: import.meta.env.MODE,
       release: `ondo@${APP_VERSION}`,
       tracesSampleRate: 0.1,
+      transport: (options) => {
+        const inner = Sentry.makeFetchTransport(options);
+        return {
+          ...inner,
+          send: (envelope) => (reportingEnabled ? inner.send(envelope) : Promise.resolve({})),
+        };
+      },
       initialScope: {
         tags: {
           app: "ondo",
@@ -36,10 +55,11 @@ const reportedKeys = new Set<string>();
 
 /**
  * `send` を `key` ごとにセッション中1回だけ実行する。
- * ポーリングで毎回起きる失敗を毎秒送らないため
+ * ポーリングで毎回起きる失敗を毎秒送らないため。
+ * 送信オフの間は記録しないので、オンに戻せば一度は送られる
  */
 export function captureOnce(key: string, send: () => void) {
-  if (reportedKeys.has(key)) return;
+  if (!reportingEnabled || reportedKeys.has(key)) return;
   reportedKeys.add(key);
   send();
 }

@@ -24,6 +24,10 @@ once_cell = "1.19"
 log = "0.4"
 sysinfo = "0.39"
 
+[dev-dependencies]
+# Captures events in-process for the error_reporting tests
+sentry = { version = "0.49", features = ["test"] }
+
 # Windows-specific dependencies for hardware monitoring
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"

@@ -4,21 +4,37 @@ use once_cell::sync::{Lazy, OnceCell};
 use sentry::protocol::{Attachment, Value};
 use sentry::{ClientInitGuard, Level};
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 static SENTRY_GUARD: OnceCell<ClientInitGuard> = OnceCell::new();
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The "Send Error Reports" setting. Sentry is initialized either way and
+/// this is checked as each event goes out, so switching it needs no restart.
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
 static REPORTED: Lazy<Mutex<HashSet<String>>> = Lazy::new(Default::default);
 
 /// True the first time `key` comes up this session. Failures that recur on
-/// every poll go through this so each is sent once, not every second.
+/// every poll go through this so each is sent once, not every second. Keys
+/// aren't recorded while reporting is off, so a failure seen then still goes
+/// out once if it's switched back on.
 pub fn first_report(key: &str) -> bool {
-    REPORTED
-        .lock()
-        .map(|mut keys| keys.insert(key.to_string()))
-        .unwrap_or(false)
+    enabled()
+        && REPORTED
+            .lock()
+            .map(|mut keys| keys.insert(key.to_string()))
+            .unwrap_or(false)
 }
 
 /// Only these log tags go out with a report: they explain sensor problems,
@@ -42,16 +58,7 @@ fn hardware_log_attachment() -> Attachment {
     }
 }
 
-/// Initialize Sentry for error reporting
-pub fn init_sentry() {
-    // Get DSN from environment variable (set during build)
-    let dsn = option_env!("SENTRY_DSN").unwrap_or("");
-
-    if dsn.is_empty() {
-        crate::log_info!("Sentry", "DSN not configured, error reporting disabled");
-        return;
-    }
-
+fn client_options() -> sentry::ClientOptions {
     // ClientOptions is #[non_exhaustive] as of sentry 0.48.5, so build it by
     // mutation instead of a struct literal. sample_rate defaults to 1.0.
     let mut options = sentry::ClientOptions::default();
@@ -64,7 +71,33 @@ pub fn init_sentry() {
         }
         .into(),
     );
-    let guard = sentry::init((dsn, options));
+    // Every event passes through here, panics included. Besides the
+    // setting, it drops what the SDK adds on its own: the hostname (often
+    // the owner's name) and loaded module paths (the per-user install lives
+    // under the Windows user folder). Release builds are stripped, so the
+    // module list wouldn't help symbolicate anything.
+    options.before_send = Some(Arc::new(|mut event| {
+        if !enabled() {
+            return None;
+        }
+        event.server_name = None;
+        event.debug_meta = Default::default();
+        Some(event)
+    }));
+    options
+}
+
+/// Initialize Sentry for error reporting
+pub fn init_sentry() {
+    // Get DSN from environment variable (set during build)
+    let dsn = option_env!("SENTRY_DSN").unwrap_or("");
+
+    if dsn.is_empty() {
+        crate::log_info!("Sentry", "DSN not configured, error reporting disabled");
+        return;
+    }
+
+    let guard = sentry::init((dsn, client_options()));
 
     if SENTRY_GUARD.set(guard).is_err() {
         crate::log_warn!("Sentry", "Already initialized");
@@ -75,6 +108,9 @@ pub fn init_sentry() {
 
 /// Capture an error with context
 pub fn capture_error(error: &str, source: &str, extra: Option<&[(&str, &str)]>) {
+    if !enabled() {
+        return;
+    }
     sentry::with_scope(
         |scope| {
             scope.set_tag("source", source);
@@ -138,6 +174,9 @@ pub fn capture_health_anomaly(anomaly: &Anomaly, data: &HardwareData) {
             .map(|v| format!(" (value {})", v))
             .unwrap_or_default()
     );
+    if !enabled() {
+        return;
+    }
 
     // "Never available" is often expected (no PawnIO, Macs without SMC
     // access), so it doesn't get the error level that alerts by default
@@ -200,4 +239,73 @@ pub fn capture_lhm_event(title: &str, details: &str, level: Level) {
             sentry::capture_message(&format!("[LHM] {}", title), level);
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sentry::integrations::debug_images::DebugImagesIntegration;
+    use sentry::test::with_captured_events_options;
+
+    // ENABLED is process-wide; tests that depend on it hold this
+    static ENABLED_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_enabled() -> std::sync::MutexGuard<'static, ()> {
+        ENABLED_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn send_both_ways() {
+        capture_error("boom", "test", None);
+        // What the panic integration and any direct SDK call go through
+        sentry::capture_message("direct", Level::Error);
+    }
+
+    #[test]
+    fn nothing_is_sent_while_off_and_sending_resumes_without_reinit() {
+        let _enabled = lock_enabled();
+        set_enabled(false);
+        let off = with_captured_events_options(send_both_ways, client_options());
+        set_enabled(true);
+        let on = with_captured_events_options(send_both_ways, client_options());
+
+        assert!(off.is_empty(), "sent while off: {:?}", off);
+        assert_eq!(on.len(), 2);
+    }
+
+    #[test]
+    fn failures_seen_while_off_are_still_reported_once_after() {
+        let _enabled = lock_enabled();
+        let key = "test:seen-while-off";
+        set_enabled(false);
+        let while_off = first_report(key);
+        set_enabled(true);
+
+        assert!(!while_off);
+        assert!(first_report(key));
+        assert!(!first_report(key));
+    }
+
+    #[test]
+    fn events_leave_without_hostname_or_module_paths() {
+        let _enabled = lock_enabled();
+        let with_sdk_extras = |mut options: sentry::ClientOptions| {
+            options.server_name = Some("alices-pc".into());
+            options
+                .integrations
+                .push(Arc::new(DebugImagesIntegration::new()));
+            options
+        };
+        let send = || {
+            sentry::capture_message("boom", Level::Error);
+        };
+
+        let plain = with_captured_events_options(send, with_sdk_extras(Default::default()));
+        let ours = with_captured_events_options(send, with_sdk_extras(client_options()));
+
+        // The SDK does add both, so the stripping below is real
+        assert!(plain[0].server_name.is_some());
+        assert!(!plain[0].debug_meta.is_empty());
+        assert_eq!(ours[0].server_name, None);
+        assert!(ours[0].debug_meta.is_empty());
+    }
 }

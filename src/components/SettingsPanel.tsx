@@ -259,6 +259,25 @@ export function SettingsPanel({
             </label>
           </div>
 
+          <div className="setting-group toggle-group">
+            <label className="setting-toggle">
+              <span>Send Error Reports</span>
+              <input
+                type="checkbox"
+                checked={settings.errorReporting}
+                onChange={(e) =>
+                  onSettingsChange({ errorReporting: e.target.checked })
+                }
+              />
+              <span className="toggle-slider" />
+            </label>
+            <p className="setting-hint">
+              Sends errors and sensor diagnostics (hardware models, temperatures,
+              sensor log) to the developer via Sentry. Applies immediately; see the
+              README for details.
+            </p>
+          </div>
+
           {/* Update Check Button */}
           {onCheckUpdate && (
             <div className="setting-group">

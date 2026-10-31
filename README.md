@@ -38,6 +38,7 @@ Download the latest release from the [Releases](https://github.com/yossyl3oy/Ond
 - **Theme**: Auto (system) / Dark / Light
 - **Compact Mode**: Reduced widget size
 - **Debug Server**: Enable HTTP debug server on port 19210
+- **Send Error Reports**: On by default; see [Privacy](#privacy)
 
 ## Hardware Monitoring
 
@@ -78,6 +79,21 @@ curl -s "http://<WINDOWS_IP>:19210/api/hardware"
 curl -s "http://<WINDOWS_IP>:19210/api/window"
 curl -s "http://<WINDOWS_IP>:19210/logs/search?q=error&format=json"
 ```
+
+## Privacy
+
+Release builds send error reports to the developer through [Sentry](https://sentry.io), so missing or wrong sensor readings can be fixed without asking you for logs. Turn **Send Error Reports** off in Settings to stop this. It applies immediately, and while it's off nothing is sent at all, including Sentry's ping at app start. Builds from source send nothing unless the Sentry DSNs are set at build time (see `.env.example`).
+
+A report can contain:
+
+- Error messages, with a stack trace for crashes
+- Hardware model names (CPU, GPU, motherboard, display) and their readings: temperatures, loads, clocks, fan speeds, memory/disk usage, refresh rate and current FPS
+- The state of the LibreHardwareMonitor sensor process and the PawnIO driver service (Windows)
+- The last ~300 lines of Ondo's log, limited to the `Hardware`, `PawnIO`, `Health` and `macOS` tags
+- Drives only as "drive N of M (size)"
+- What Sentry adds by default: app version, OS name and version, CPU architecture and device model; for errors in the UI, the webview's user agent and the recent console messages and clicked UI elements leading up to the error; and one session ping per app start, used to count crash-free sessions
+
+Reports never include network interface names, the names of processes Ondo measures FPS for, drive or volume names, or your computer's hostname.
 
 ## Tech Stack
 

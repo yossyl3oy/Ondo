@@ -211,6 +211,14 @@
   box-shadow: 0 0 8px var(--hud-glow);
 }
 
+/* Note under a setting */
+.setting-hint {
+  font-size: 10px;
+  color: var(--hud-text-secondary);
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+
 /* Update button */
 .setting-button {
   width: 100%;

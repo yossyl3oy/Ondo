@@ -31,6 +31,8 @@ pub struct AppSettings {
     pub temperature_unit: String,
     pub compact_mode: bool,
     pub debug_server: bool,
+    /// Send error and sensor-health reports to Sentry (see README "Privacy")
+    pub error_reporting: bool,
     pub section_order: Vec<String>,
     pub hidden_sections: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,6 +53,7 @@ impl Default for AppSettings {
             temperature_unit: "celsius".to_string(),
             compact_mode: false,
             debug_server: false,
+            error_reporting: true,
             section_order: default_section_order(),
             hidden_sections: Vec::new(),
             window_state: None,
@@ -204,6 +207,21 @@ pub async fn set_auto_start(_enabled: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_reporting_defaults_on_for_settings_saved_before_it_existed() {
+        let settings: AppSettings = serde_json::from_str(r#"{"debugServer": true}"#).unwrap();
+        assert!(settings.error_reporting);
+        assert!(settings.debug_server);
+    }
+
+    #[test]
+    fn error_reporting_off_round_trips() {
+        let settings: AppSettings = serde_json::from_str(r#"{"errorReporting": false}"#).unwrap();
+        assert!(!settings.error_reporting);
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert_eq!(saved["errorReporting"], serde_json::Value::Bool(false));
+    }
 
     #[test]
     fn create_args_register_elevated_logon_task() {

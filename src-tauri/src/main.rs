@@ -192,6 +192,7 @@ async fn save_settings(
         })?;
         *current = settings.clone();
     }
+    error_reporting::set_enabled(settings.error_reporting);
     settings::save_settings_to_file(&settings)
         .await
         .map_err(|e| {
@@ -850,11 +851,13 @@ fn main() {
     // Capture all `log` crate output (including Tauri internals) into the debug server buffer
     log_buffer::init_logger();
 
-    // Initialize Sentry for error reporting
-    error_reporting::init_sentry();
-
     let initial_settings =
         settings::load_settings_from_file().unwrap_or_else(|_| settings::AppSettings::default());
+
+    // Initialize Sentry for error reporting, with the user's opt-out applied
+    // before anything can be sent
+    error_reporting::set_enabled(initial_settings.error_reporting);
+    error_reporting::init_sentry();
 
     // Clone values we need for setup before moving into AppState
     let startup_position = initial_settings.position.clone();
