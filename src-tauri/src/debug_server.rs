@@ -435,7 +435,10 @@ async fn get_raw_sensor_data() -> String {
 async fn get_raw_sensor_data() -> String {
     use sysinfo::Components;
 
-    let components = Components::new_with_refreshed_list();
+    let components = match Components::new_with_refreshed_list() {
+        Ok(components) => components,
+        Err(e) => return format!("Failed to read temperature sensors: {}", e),
+    };
     let mut output = String::from("=== macOS Temperature Sensors (via sysinfo) ===\n\n");
 
     for comp in components.iter() {

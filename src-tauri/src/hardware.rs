@@ -590,10 +590,13 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
         let network = {
             let mut guard = NETWORK_MONITOR.lock().unwrap_or_else(|e| e.into_inner());
             if guard.is_none() {
-                *guard = Some(NetworkMonitor {
-                    networks: Networks::new_with_refreshed_list(),
-                    last_refresh: std::time::Instant::now(),
-                });
+                // Only fails on platforms sysinfo does not support; retried next poll
+                if let Ok(networks) = Networks::new_with_refreshed_list() {
+                    *guard = Some(NetworkMonitor {
+                        networks,
+                        last_refresh: std::time::Instant::now(),
+                    });
+                }
                 // First call: return empty (no delta yet)
                 Vec::new()
             } else {
@@ -1090,7 +1093,8 @@ const VIRTUAL_IFACE_PREFIXES: &[&str] = &[
 
 fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkInterfaceData> {
     let mut result = Vec::new();
-    for (name, data) in networks.list() {
+    for (name, data) in networks {
+        let name = name.to_string_lossy();
         // Filter out loopback and virtual interfaces
         let lower = name.to_lowercase();
         if lower == "lo"
@@ -1114,7 +1118,7 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
             1.0
         };
         result.push(NetworkInterfaceData {
-            name: name.clone(),
+            name: name.into_owned(),
             received_per_sec: received as f64 / rate,
             sent_per_sec: transmitted as f64 / rate,
         });
@@ -1128,7 +1132,7 @@ fn collect_network_data(networks: &Networks, interval_secs: f64) -> Vec<NetworkI
 /// live load data and sysinfo is only a supplement.
 #[cfg(target_os = "windows")]
 fn sysinfo_cpu_data(sample_cpu_usage: bool) -> Option<CpuData> {
-    let mut sys = System::new();
+    let mut sys = System::new().ok()?;
     sys.refresh_cpu_all();
     if sample_cpu_usage {
         // Brief pause then refresh again for accurate CPU usage readings.
@@ -1143,7 +1147,7 @@ fn sysinfo_cpu_data(sample_cpu_usage: bool) -> Option<CpuData> {
 
     let name = cpus[0].brand().to_string();
     let total_load: f32 = if sample_cpu_usage {
-        cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+        cpus.iter().map(|c| c.usage()).sum::<f32>() / cpus.len() as f32
     } else {
         0.0
     };
@@ -1157,7 +1161,7 @@ fn sysinfo_cpu_data(sample_cpu_usage: bool) -> Option<CpuData> {
             CpuCoreData {
                 index: i as u32,
                 temperature: 0.0, // sysinfo does not provide CPU temperature on Windows
-                load: if sample_cpu_usage { c.cpu_usage() } else { 0.0 },
+                load: if sample_cpu_usage { c.usage() } else { 0.0 },
             }
         })
         .collect();
@@ -1175,7 +1179,7 @@ fn sysinfo_cpu_data(sample_cpu_usage: bool) -> Option<CpuData> {
 /// Fallback storage data from sysinfo Disks (no WMI dependency).
 #[cfg(target_os = "windows")]
 fn sysinfo_storage_data() -> Option<Vec<StorageData>> {
-    let disks = Disks::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list().ok()?;
     let storage_data: Vec<StorageData> = disks
         .iter()
         .filter(|d| d.total_space() > 1_073_741_824) // > 1GB
@@ -1362,12 +1366,13 @@ struct MacOsMonitor {
 static MACOS_MONITOR: Mutex<Option<MacOsMonitor>> = Mutex::new(None);
 
 #[cfg(target_os = "macos")]
-fn init_macos_monitor() -> MacOsMonitor {
-    let mut system = System::new();
+fn init_macos_monitor() -> Result<MacOsMonitor, String> {
+    let unavailable = |e: sysinfo::Error| format!("sysinfo unavailable: {}", e);
+    let mut system = System::new().map_err(unavailable)?;
     system.refresh_cpu_all();
 
-    let components = Components::new_with_refreshed_list();
-    let disks = Disks::new_with_refreshed_list();
+    let components = Components::new_with_refreshed_list().map_err(unavailable)?;
+    let disks = Disks::new_with_refreshed_list().map_err(unavailable)?;
 
     // Log available temperature sensors for debugging
     for comp in components.iter() {
@@ -1389,17 +1394,17 @@ fn init_macos_monitor() -> MacOsMonitor {
     crate::log_info!("macOS", "GPU: {} ({:.1} GB)", gpu_name, gpu_memory_total);
     crate::log_info!("macOS", "Model: {}", model_name);
 
-    MacOsMonitor {
+    Ok(MacOsMonitor {
         system,
         components,
         disks,
-        networks: Networks::new_with_refreshed_list(),
+        networks: Networks::new_with_refreshed_list().map_err(unavailable)?,
         last_refresh: std::time::Instant::now(),
         gpu_name,
         gpu_memory_total,
         model_name,
         initialized: false,
-    }
+    })
 }
 
 /// Classify a temperature sensor label into a hardware category
@@ -1466,7 +1471,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
             .map_err(|e| format!("Monitor lock failed: {}", e))?;
 
         if monitor_guard.is_none() {
-            *monitor_guard = Some(init_macos_monitor());
+            *monitor_guard = Some(init_macos_monitor()?);
         }
 
         let monitor = monitor_guard.as_mut().unwrap();
@@ -1551,7 +1556,7 @@ pub async fn get_hardware_info() -> Result<HardwareData, String> {
                 CpuCoreData {
                     index: i as u32,
                     temperature: core_temp,
-                    load: cpu.cpu_usage(),
+                    load: cpu.usage(),
                 }
             })
             .collect();

@@ -34,15 +34,19 @@ struct MetricsState {
     system: System,
 }
 
-static METRICS_STATE: Lazy<Mutex<MetricsState>> = Lazy::new(|| {
-    Mutex::new(MetricsState {
-        system: System::new(),
-    })
+// System::new only fails on platforms sysinfo does not support
+static METRICS_STATE: Lazy<Result<Mutex<MetricsState>, String>> = Lazy::new(|| {
+    let system = System::new().map_err(|e| format!("sysinfo unavailable: {}", e))?;
+    Ok(Mutex::new(MetricsState { system }))
 });
 
 pub fn snapshot(extra_pids: &[u32]) -> Result<RuntimeMetrics, String> {
     let current_pid = Pid::from_u32(std::process::id());
-    let mut state = METRICS_STATE.lock().map_err(|e| e.to_string())?;
+    let mut state = METRICS_STATE
+        .as_ref()
+        .map_err(Clone::clone)?
+        .lock()
+        .map_err(|e| e.to_string())?;
 
     state.system.refresh_processes_specifics(
         ProcessesToUpdate::All,
