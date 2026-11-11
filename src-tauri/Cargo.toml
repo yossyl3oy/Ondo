@@ -1,6 +1,6 @@
 [package]
 name = "ondo"
-version = "0.1.54"
+version = "0.1.55"
 description = "Iron Man HUD-style hardware temperature monitoring widget"
 authors = ["Ondo"]
 license = "MIT"
