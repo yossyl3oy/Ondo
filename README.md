@@ -99,7 +99,7 @@ Reports never include network interface names, the names of processes Ondo measu
 
 - **Frontend**: React 19 + TypeScript + Vite
 - **Backend**: Tauri 2 (Rust)
-- **Hardware**: LibreHardwareMonitor (.NET 8) / System APIs
+- **Hardware**: LibreHardwareMonitor (.NET 10) / System APIs
 - **Package Manager**: pnpm (managed via [mise](https://mise.jdx.dev/))
 
 ## Development

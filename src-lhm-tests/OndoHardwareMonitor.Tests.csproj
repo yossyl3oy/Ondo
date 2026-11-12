@@ -2,7 +2,7 @@
 
   <!-- Local-only tests, not run in CI. Run with: mise exec, then dotnet test src-lhm-tests -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
