@@ -32,4 +32,28 @@
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.7-pre785" />
   </ItemGroup>
 
+  <!-- Fail the build when a package silently falls back to its netstandard build.
+       When LibreHardwareMonitorLib (or one of its System.* dependencies) drops the
+       framework we target, NuGet picks the netstandard2.0 assets instead. Those still
+       compile, but for Windows-only packages such as System.Management they are
+       PlatformNotSupported stubs, so the daemon dies at startup and CPU and drive
+       temperatures turn into N/A (this shipped in 0.1.55).
+       Packages listed here only ship a netstandard build and are known to work. -->
+  <PropertyGroup>
+    <NetStandardOnlyPackages>;HidSharp;Mono.Posix.NETStandard;System.IO.FileSystem.AccessControl;</NetStandardOnlyPackages>
+  </PropertyGroup>
+
+  <Target Name="RejectNetStandardFallback" BeforeTargets="CoreCompile" DependsOnTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <_LhmRuntimeAsset Include="@(RuntimeCopyLocalItems)" Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' == 'LibreHardwareMonitorLib'" />
+      <_NetStandardAsset Include="@(RuntimeCopyLocalItems)" Condition="$([System.String]::Copy('%(RuntimeCopyLocalItems.PathInPackage)').ToLowerInvariant().Contains('netstandard'))" />
+      <_AllowedNetStandardAsset Include="@(_NetStandardAsset)" Condition="$(NetStandardOnlyPackages.Contains(';%(_NetStandardAsset.NuGetPackageId);'))" />
+      <_UnexpectedNetStandardAsset Include="@(_NetStandardAsset)" Condition="!$(NetStandardOnlyPackages.Contains(';%(_NetStandardAsset.NuGetPackageId);'))" />
+    </ItemGroup>
+    <!-- If the item names ever change this check would pass without looking at anything. -->
+    <Error Condition="'@(_LhmRuntimeAsset)' == ''" Text="RejectNetStandardFallback found no LibreHardwareMonitorLib runtime asset to inspect; the guard is not checking anything. Update the target in OndoHardwareMonitor.csproj." />
+    <Message Importance="high" Text="RejectNetStandardFallback: LibreHardwareMonitorLib -> @(_LhmRuntimeAsset->'%(PathInPackage)', ', '); allowed netstandard-only packages: @(_AllowedNetStandardAsset->'%(NuGetPackageId)', ', ')" />
+    <Error Condition="'@(_UnexpectedNetStandardAsset)' != ''" Text="These packages resolved to a netstandard build for $(TargetFramework): @(_UnexpectedNetStandardAsset->'%(NuGetPackageId) %(NuGetPackageVersion) [%(PathInPackage)]', ', '). The netstandard builds of Windows-only packages are PlatformNotSupported stubs, so the daemon would not start. A package probably dropped $(TargetFramework): raise TargetFramework here and in src-lhm-tests, and dotnet in .mise.toml, to a framework the package still ships. If a package genuinely only ships netstandard, add it to NetStandardOnlyPackages after checking it works." />
+  </Target>
+
 </Project>
