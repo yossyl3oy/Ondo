@@ -15,13 +15,21 @@ on:
 permissions:
   contents: write
 
+# One run at a time: a second run for the same version would otherwise build into the same draft
+# and could re-upload assets after the first run has already published it
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.create-release.outputs.id || steps.get-existing-release.outputs.id }}
+      release_id: ${{ steps.create-release.outputs.id || steps.check-release.outputs.id }}
       version: ${{ steps.get-version.outputs.version }}
       is_rebuild: ${{ steps.check-release.outputs.exists }}
+      # true while the release is still a draft: publish-release publishes it once every installer is uploaded
+      is_draft: ${{ steps.create-release.outputs.id != '' && 'true' || steps.check-release.outputs.draft }}
       skip: ${{ steps.check-version.outputs.skip }}
     steps:
       - uses: actions/checkout@v7
@@ -36,16 +44,24 @@ jobs:
         id: check-release
         run: |
           CURRENT="v${{ steps.get-version.outputs.version }}"
-          if gh release view "$CURRENT" > /dev/null 2>&1; then
+          # Look the release up in the list, not by tag: a draft has no tag until it is published,
+          # so a draft left by a failed run is only found this way.
+          RELEASE_ID=$(gh api "repos/${{ github.repository }}/releases?per_page=100" --paginate \
+            -q ".[] | select(.tag_name == \"$CURRENT\") | .id" | head -n 1)
+          if [ -n "$RELEASE_ID" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
+            DRAFT=$(gh api "repos/${{ github.repository }}/releases/$RELEASE_ID" -q '.draft')
+            echo "draft=$DRAFT" >> $GITHUB_OUTPUT
             # Check if release has all expected assets (Windows .exe, macOS .dmg files)
-            ASSETS=$(gh release view "$CURRENT" --json assets -q '.assets[].name' 2>/dev/null || echo "")
-            if echo "$ASSETS" | grep -q "setup\.exe" && echo "$ASSETS" | grep -q "\.dmg"; then
+            ASSETS=$(gh api "repos/${{ github.repository }}/releases/$RELEASE_ID" -q '.assets[].name')
+            # A draft is never complete: the run that left it stopped before publishing, so build and publish again
+            if [ "$DRAFT" != "true" ] && echo "$ASSETS" | grep -q "setup\.exe" && echo "$ASSETS" | grep -q "\.dmg"; then
               echo "complete=true" >> $GITHUB_OUTPUT
               echo "Release $CURRENT is complete with all assets"
             else
               echo "complete=false" >> $GITHUB_OUTPUT
-              echo "Release $CURRENT exists but is incomplete (missing assets)"
+              echo "Release $CURRENT exists but is incomplete (draft=$DRAFT or missing assets)"
             fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -70,25 +86,12 @@ jobs:
             echo "Will build: exists=$EXISTS complete=$COMPLETE force=$FORCE"
           fi
 
-      - name: Get existing release ID for rebuild
-        id: get-existing-release
-        if: steps.check-version.outputs.skip == 'false' && steps.check-release.outputs.exists == 'true'
-        run: |
-          RELEASE_ID=$(gh release view "v${{ steps.get-version.outputs.version }}" --json id -q '.id' 2>/dev/null || echo "")
-          # GitHub CLI returns database ID, we need to get the release ID from API
-          RELEASE_DATA=$(gh api repos/${{ github.repository }}/releases/tags/v${{ steps.get-version.outputs.version }})
-          RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
-          echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
-          echo "Rebuilding release with ID: $RELEASE_ID"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Generate changelog
         id: changelog
         if: steps.check-version.outputs.skip == 'false' && steps.check-release.outputs.exists != 'true'
         run: |
-          # Find the previous release tag and fetch it
-          PREV_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          # Find the previous release tag and fetch it (a draft has no tag yet, so skip drafts)
+          PREV_TAG=$(gh release list --limit 1 --exclude-drafts --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             git fetch origin "refs/tags/${PREV_TAG}:refs/tags/${PREV_TAG}" 2>/dev/null || PREV_TAG=""
           fi
@@ -113,6 +116,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ steps.get-version.outputs.version }}
+          # The tag is created when the draft is published; point it at the commit being built,
+          # not at whatever main is by then
+          commitish: ${{ github.sha }}
           release_name: Ondo v${{ steps.get-version.outputs.version }}
           body: |
             ## Ondo v${{ steps.get-version.outputs.version }}
@@ -125,7 +131,8 @@ jobs:
 
             ### Changes
             ${{ steps.changelog.outputs.commits }}
-          draft: false
+          # Kept as a draft until every installer is uploaded (see publish-release)
+          draft: true
           prerelease: false
 
   build-tauri:
@@ -275,3 +282,20 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: true
           updaterJsonKeepUniversal: true
+
+  publish-release:
+    needs: [create-release, build-tauri]
+    # Runs only when every build succeeded (needs requires it). Until then the release stays a draft, so
+    # "latest" (and the updater's latest.json) keeps pointing at the previous release, and the release
+    # "published" webhook that posts to Discord #releases fires once the installers are ready.
+    if: needs.create-release.outputs.skip != 'true' && needs.create-release.outputs.is_draft == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Also point the tag at the commit this run built: a draft left by a failed run still targets
+      # the commit it was created for
+      - name: Publish the release
+        run: |
+          gh api -X PATCH "repos/${{ github.repository }}/releases/${{ needs.create-release.outputs.release_id }}" \
+            -F draft=false -f target_commitish="${{ github.sha }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
